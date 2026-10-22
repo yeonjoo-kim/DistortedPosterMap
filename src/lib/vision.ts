@@ -1,4 +1,10 @@
 import { clamp } from './math';
+
+export function cameraStrength(speed: number, confidence: number) {
+  return confidence >= 0.6 && Number.isFinite(speed)
+    ? clamp((speed - 2) / 48, 0, 1) ** 0.75
+    : 0;
+}
 import type { MotionCallback, StatusCallback } from './motion';
 
 const median = (values: number[]) => {
@@ -206,7 +212,7 @@ export async function startCameraMotion(
         const confidence = flow.confidence;
         onSample({
           source: 'camera',
-          strength: confidence >= 0.6 ? clamp((speed - 4) / 90, 0, 1) : 0,
+          strength: cameraStrength(speed, confidence),
           direction: {
             x: -flow.dx / Math.max(1, flow.magnitude),
             y: -flow.dy / Math.max(1, flow.magnitude),

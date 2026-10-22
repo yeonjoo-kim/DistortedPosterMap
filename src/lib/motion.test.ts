@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accelerationSample, startDeviceMotion } from './motion';
 import type { InputStatus, MotionSample } from './motion';
-import { estimateCameraMotion } from './vision';
-import { soundProfile } from './instrument';
+import { cameraStrength, estimateCameraMotion } from './vision';
+import { distortionCurve, soundProfile } from './instrument';
 import { materialResponse } from './math';
 
 afterEach(() => {
@@ -118,6 +118,13 @@ function shifted(
   return output;
 }
 describe('camera relative-motion estimation', () => {
+  it('amplifies small tracked movement while keeping still and unreliable scenes quiet', () => {
+    expect(cameraStrength(0, 1)).toBe(0);
+    expect(cameraStrength(12, 1)).toBeGreaterThan(0.25);
+    expect(cameraStrength(40, 1)).toBeGreaterThan(cameraStrength(12, 1));
+    expect(cameraStrength(100, 0.3)).toBe(0);
+    expect(cameraStrength(NaN, 1)).toBe(0);
+  });
   it('recovers a global scene shift across the frame', () => {
     const a = texture(128, 96),
       b = shifted(a, 128, 96, 3, -2);
@@ -157,13 +164,19 @@ describe('continuous material and instrument response', () => {
     expect(soft.canFracture).toBe(false);
     expect(hard.canFracture).toBe(true);
   });
-  it('moves from soft low tones to brighter harmonics and noise, and is silent at rest', () => {
+  it('plays heavier, faster power chords for stronger motion and stays silent at rest', () => {
     const soft = soundProfile(0.1),
       hard = soundProfile(0.9);
     expect(hard.cutoff).toBeGreaterThan(soft.cutoff * 10);
-    expect(hard.harmonics).toBeGreaterThan(soft.harmonics * 50);
-    expect(hard.noise).toBeGreaterThan(soft.noise);
+    expect(hard.drive).toBeGreaterThan(soft.drive * 2);
+    expect(hard.pickInterval).toBeLessThan(soft.pickInterval / 2);
+    expect(hard.midi).toBeGreaterThan(soft.midi);
+    expect(hard.sustain).toBeGreaterThan(soft.sustain);
     expect(soundProfile(0).gain).toBe(0);
     expect(soundProfile(NaN).gain).toBe(0);
+    const curve = distortionCurve(10);
+    expect(Math.max(...curve)).toBeLessThanOrEqual(1);
+    expect(curve[1500]).toBeGreaterThan(0.99);
+    expect(curve[547]).toBeCloseTo(-curve[1500], 4);
   });
 });

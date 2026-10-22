@@ -58,11 +58,23 @@ try {
   await page.addInitScript(() => {
     window.__audioContexts = [];
     window.__analysers = [];
+    window.__guitarAmps = [];
+    window.__guitarNotes = [];
     const NativeAudio = window.AudioContext;
     window.AudioContext = class extends NativeAudio {
       constructor(...args) {
         super(...args);
         window.__audioContexts.push(this);
+      }
+      createWaveShaper() {
+        const node = super.createWaveShaper();
+        window.__guitarAmps.push(node);
+        return node;
+      }
+      createBufferSource() {
+        const node = super.createBufferSource();
+        window.__guitarNotes.push(node);
+        return node;
       }
       createAnalyser() {
         const node = super.createAnalyser();
@@ -84,9 +96,10 @@ try {
   );
   const blankPaper = await page.locator('.paper').boundingBox();
   assert(Math.abs(blankPaper.width - 534) < 4);
+  assert.equal(await page.locator('.tape').count(), 0);
   await page.screenshot({ path: 'test-results/home.png', fullPage: true });
   record(
-    'Figma paper, tapes and upload control replace the old workbench and element list',
+    'Plain paper and upload control replace the old workbench and element list',
   );
 
   const click = (name, target = page) =>
@@ -105,11 +118,13 @@ try {
     await choose('좌표 · 경로 JSON', target);
     return JSON.parse(await readFile(await (await promise).path(), 'utf8'));
   }
+  let promptRecorded = false;
   async function upload(
     buffer,
     name = 'fixture.png',
     mimeType = 'image/png',
     target = page,
+    useCameraPrompt = false,
   ) {
     await target
       .getByLabel('포스터 파일 선택')
@@ -119,6 +134,23 @@ try {
         document.querySelector('.paper')?.getAttribute('aria-busy') === 'false',
     );
     await target.getByLabel('왜곡되는 포스터', { exact: true }).waitFor();
+    const prompt = target.getByRole('dialog', {
+      name: '카메라 움직임 감지를 켭니다',
+      exact: true,
+    });
+    if ((await prompt.count()) && !promptRecorded) {
+      await target.screenshot({
+        path: 'test-results/camera-prompt.png',
+        fullPage: true,
+      });
+      assert((await prompt.textContent()).includes('저장·전송하지 않습니다'));
+      promptRecorded = true;
+      record(
+        'Upload opens a camera explanation with explicit activation and defer controls',
+      );
+    }
+    if ((await prompt.count()) && !useCameraPrompt)
+      await target.getByRole('button', { name: '나중에', exact: true }).click();
   }
   async function sensor(x, y = 0, z = 0) {
     await page.evaluate(
@@ -161,7 +193,7 @@ try {
     canvas.width = 400;
     canvas.height = 600;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#eee3cd';
     ctx.fillRect(0, 0, 400, 600);
     ctx.fillStyle = '#202020';
     ctx.fillRect(30, 30, 120, 70);
@@ -182,6 +214,13 @@ try {
   await upload(png);
   const initial = await map();
   assert(initial.elements.length >= 4);
+  assert.equal(
+    await page
+      .locator('.studio')
+      .evaluate((el) => getComputedStyle(el).backgroundColor),
+    'rgb(238, 227, 205)',
+  );
+  assert.equal(await page.locator('.tape').count(), 0);
   assert.deepEqual(initial.materialMix, { zigzag: 0.2, fracture: 0.8 });
   assert(
     initial.bounds.width > initial.width &&
@@ -238,7 +277,12 @@ try {
   const soft = await map();
   assert(soft.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
   assert(soft.elements.every((e) => e.kind !== 'fragment'));
-  assert(soft.elements.every((e) => e.warp < 5));
+  assert(
+    soft.elements.every((e) => {
+      const xs = e.sourceVertices.map((v) => v.x);
+      return e.warp <= (Math.max(...xs) - Math.min(...xs)) * 0.055;
+    }),
+  );
   assert(
     soft.fixtures.some(
       (e, i) =>
@@ -255,11 +299,28 @@ try {
   assert(muted.rms < Math.max(softSpectrum.rms * 0.02, 1e-5));
   await click('연주 소리');
   record('Sound toggle mutes the actual Web Audio output');
+  assert.equal(
+    await page.evaluate(() => window.__guitarAmps[0].oversample),
+    '4x',
+  );
+  assert(
+    await page.evaluate(
+      () =>
+        window.__guitarNotes.length >= 3 &&
+        window.__guitarNotes.length % 3 === 0,
+    ),
+  );
+  record(
+    'Plucked root/fifth/octave guitar strings pass through an oversampled distortion amp',
+  );
 
   for (let i = 0; i < 12; i++) await sensor(i % 2 ? 11 : -11, 3);
   const hardSpectrum = await spectrum();
   assert(hardSpectrum.power > softSpectrum.power);
-  assert(hardSpectrum.centroid > softSpectrum.centroid * 1.3);
+  assert(
+    hardSpectrum.centroid > softSpectrum.centroid * 1.3,
+    JSON.stringify({ softSpectrum, hardSpectrum }),
+  );
   let broken;
   for (let i = 0; i < 10; i++) {
     broken = await map();
@@ -402,9 +463,12 @@ try {
     });
   });
   await cameraPage.goto(`http://127.0.0.1:${port}`);
-  await upload(png, 'fixture.png', 'image/png', cameraPage);
-  await menu('노트북 움직임 감지', cameraPage);
-  await choose('카메라로 움직임 감지', cameraPage);
+  await upload(png, 'fixture.png', 'image/png', cameraPage, true);
+  assert.equal(
+    await cameraPage.evaluate(() => !!window.__cameraConstraints),
+    false,
+  );
+  await click('카메라 감지 시작', cameraPage);
   await cameraPage.waitForFunction(
     () =>
       document
@@ -447,6 +511,29 @@ try {
   );
   await cameraPage.close();
   record('Stopping detection releases the camera track');
+  const denied = await context.newPage();
+  await denied.addInitScript(() => {
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+      value: async () => {
+        throw new DOMException('denied', 'NotAllowedError');
+      },
+    });
+  });
+  await denied.goto(`http://127.0.0.1:${port}`);
+  await upload(png, 'fixture.png', 'image/png', denied, true);
+  await click('카메라 감지 시작', denied);
+  await denied.waitForFunction(() =>
+    document
+      .querySelector('.camera-connection')
+      ?.textContent.includes('허용되지'),
+  );
+  assert.equal(await denied.getByRole('dialog').count(), 1);
+  await click('나중에', denied);
+  assert.equal(await denied.getByRole('dialog').count(), 0);
+  await denied.close();
+  record(
+    'Camera permission denial stays in the prompt with retry and defer options',
+  );
 
   await page.setViewportSize({ width: 390, height: 844 });
   await upload(png);

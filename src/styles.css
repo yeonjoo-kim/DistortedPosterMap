@@ -39,7 +39,7 @@ button {
   min-height: 100svh;
   position: relative;
   padding: var(--paper-gap) 0;
-  background: #f6ffbd;
+  background: var(--poster-background, #f6ffbd);
 }
 .wordmark {
   position: absolute;
@@ -97,7 +97,7 @@ button {
 .upload-button:hover {
   transform: translate(-50%, -50%) rotate(-6deg);
 }
-.upload-button img {
+.upload-button svg {
   width: 100%;
   height: 100%;
 }
@@ -109,39 +109,13 @@ button {
   transform: none;
   width: 51px;
   height: 51px;
-  background: rgba(246, 255, 189, 0.88);
-  border-radius: 50%;
+  background: var(--poster-background, #f6ffbd);
+  border: 1px solid currentColor;
+  border-radius: 8px;
   padding: 11px;
 }
 .replace-upload:hover {
   transform: rotate(-6deg);
-}
-.tape {
-  position: absolute;
-  z-index: 2;
-  pointer-events: none;
-  width: 14.25%;
-  height: auto;
-  user-select: none;
-}
-.tape-coral {
-  left: -5.2%;
-  top: -2.2%;
-}
-.tape-blue {
-  right: -3.7%;
-  top: -2.4%;
-  width: 13.2%;
-}
-.tape-pink {
-  left: -3.6%;
-  bottom: -1.65%;
-  width: 15.8%;
-}
-.tape-green {
-  right: -3.5%;
-  bottom: -2.65%;
-  width: 13.8%;
 }
 .loading-indicator {
   position: absolute;
@@ -533,4 +507,80 @@ button {
     top: 57px;
     width: 44px;
   }
+}
+
+.controls {
+  color: #14170f;
+}
+.dark-poster .wordmark,
+.dark-poster .about-button img {
+  filter: invert(1);
+}
+.camera-backdrop {
+  background: #1116;
+  backdrop-filter: blur(8px);
+}
+.camera-dialog {
+  width: min(460px, 100%);
+  padding: 32px;
+  border-radius: 16px;
+  background: #f6ffdf;
+  color: #192111;
+  box-shadow: 0 20px 80px #0002;
+}
+.dialog-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: #5b7041;
+}
+.camera-dialog h1 {
+  font-size: 23px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.4;
+  margin: 14px 0;
+}
+.camera-dialog p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #5b6351;
+}
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+}
+.dialog-actions button {
+  border: 0;
+  border-radius: 9px;
+  padding: 13px 17px;
+  background: #b7ee87;
+  font-size: 13px;
+}
+.dialog-actions button:last-child {
+  background: transparent;
+  color: #627451;
+}
+.camera-dialog .camera-connection {
+  border-top: 1px solid #d6e2c4;
+  padding-top: 12px;
+  color: #2a4418;
+}
+
+.about-dialog {
+  color: #192111;
+}
+.floating-menu {
+  position: fixed;
+  z-index: 12;
+  width: min(260px, calc(100vw - 24px));
+  max-height: calc(100svh - 24px);
+  overflow: auto;
+  color: #14170f;
+}
+.floating-menu .popover {
+  position: relative;
+  bottom: auto;
+  right: auto;
+  width: 100%;
 }

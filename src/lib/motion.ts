@@ -26,7 +26,7 @@ type Vector3 = { x: number; y: number; z: number };
 export function accelerationSample(vector: Vector3): MotionSample {
   const magnitude = Math.hypot(vector.x, vector.y, vector.z);
   const strength = Number.isFinite(magnitude)
-    ? clamp((magnitude - 0.28) / 18, 0, 1)
+    ? clamp((magnitude - 0.18) / 12, 0, 1)
     : 0;
   const planar = Math.hypot(vector.x, vector.y);
   return {

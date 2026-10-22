@@ -21,8 +21,8 @@ export function materialResponse(amplitude: number) {
   const strength = shakeImpulse(amplitude);
   return {
     strength,
-    gravity: 0.24 + strength * 0.82,
-    restitution: 0.035 + strength * 0.24,
+    gravity: 0.18 + strength * 0.52,
+    restitution: 0.24 + strength * 0.38,
     sharpness: strength,
     canFracture: strength >= 0.9 - MATERIAL_MIX.fracture * 0.5,
   };

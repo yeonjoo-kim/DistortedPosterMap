@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { Laptop, Volume2, VolumeX } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Laptop, Plus, Volume2, VolumeX } from 'lucide-react';
 import { loadPoster } from './lib/extract';
 import { exportMap, exportPoster } from './lib/export';
 import { PosterPhysics } from './lib/physics';
@@ -23,9 +24,13 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
   const [about, setAbout] = useState(false);
+  const [cameraPrompt, setCameraPrompt] = useState(false);
+  const promptRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<Settings>({ ...DEFAULT_SETTINGS });
   const [telemetry, setTelemetry] = useState(empty);
   const [menu, setMenu] = useState<'motion' | 'download' | null>(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 12, top: 12 });
+  const menuRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,6 +45,48 @@ export default function App() {
   settingsRef.current = settings;
   const input = useMotionInstrument(engineRef, settingsRef, setNotice);
   const { driveSound, impactSound } = input;
+  const background = asset?.color ?? '#f6ffbd';
+  const rgb = background.match(/[\d.]+/g)?.map(Number) ?? [246, 255, 189];
+  const dark =
+    rgb.length >= 3 && rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 < 135;
+
+  useEffect(() => {
+    document.documentElement.style.backgroundColor = background;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', background);
+  }, [background]);
+
+  useEffect(() => {
+    if (input.status.state === 'connected') setCameraPrompt(false);
+  }, [input.status.state]);
+
+  useEffect(() => {
+    if (!cameraPrompt) return;
+    promptRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        input.stopInput();
+        setCameraPrompt(false);
+      }
+      if (event.key === 'Tab') {
+        const items = [
+          ...(promptRef.current?.querySelectorAll<HTMLButtonElement>(
+            'button:not(:disabled)',
+          ) ?? []),
+        ];
+        const current = items.indexOf(
+          document.activeElement as HTMLButtonElement,
+        );
+        items[
+          (current + (event.shiftKey ? -1 : 1) + items.length) % items.length
+        ]?.focus();
+        event.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', keyboard);
+    return () => window.removeEventListener('keydown', keyboard);
+  }, [cameraPrompt, input.stopInput]);
 
   useEffect(() => {
     if (!asset || !canvasRef.current) return;
@@ -112,7 +159,7 @@ export default function App() {
             node.style.transform = `translate(${(fixture.body.position.x - fixture.origin.x) * scale}px, ${(fixture.body.position.y - fixture.origin.y) * scale}px) rotate(${fixture.body.angle}rad)`;
         },
       );
-      driveSound(Math.max(engine.energy, engine.impactEnergy * 0.7));
+      driveSound(engine.energy);
       if (now - lastUi > 110) {
         setTelemetry(engine.telemetry());
         lastUi = now;
@@ -135,11 +182,15 @@ export default function App() {
 
   useEffect(() => {
     if (!menu) return;
-    controlsRef.current
+    menuRef.current
       ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
       ?.focus();
     const outside = (event: PointerEvent) => {
-      if (!controlsRef.current?.contains(event.target as Node)) setMenu(null);
+      if (
+        !controlsRef.current?.contains(event.target as Node) &&
+        !menuRef.current?.contains(event.target as Node)
+      )
+        setMenu(null);
     };
     const keyboard = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -148,7 +199,7 @@ export default function App() {
       }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         const items = [
-          ...(controlsRef.current?.querySelectorAll<HTMLButtonElement>(
+          ...(menuRef.current?.querySelectorAll<HTMLButtonElement>(
             '[role="menuitem"]',
           ) ?? []),
         ];
@@ -194,12 +245,15 @@ export default function App() {
     setLoading(true);
     setNotice('');
     setMenu(null);
+    setCameraPrompt(false);
+    setAbout(false);
     input.stopInput();
     try {
       const next = await loadPoster(file, 'normal');
       if (id !== loadId.current) return;
       setTelemetry(empty);
       setAsset(next);
+      setCameraPrompt(true);
       setName(file.name);
     } catch (error) {
       if (id === loadId.current)
@@ -245,11 +299,24 @@ export default function App() {
     trigger: HTMLButtonElement,
   ) => {
     menuTrigger.current = trigger;
+    const box = trigger.getBoundingClientRect();
+    setMenuPosition({
+      left: Math.max(12, Math.min(innerWidth - 272, box.right - 260)),
+      top: Math.max(12, Math.min(innerHeight - 380, box.top - 300)),
+    });
     setMenu(menu === next ? null : next);
   };
 
   return (
-    <main className={`studio ${asset ? 'has-poster' : 'is-empty'}`}>
+    <main
+      className={`studio ${asset ? 'has-poster' : 'is-empty'} ${dark ? 'dark-poster' : ''}`}
+      style={
+        {
+          '--poster-background': background,
+          '--poster-ink': dark ? '#f8f8f0' : '#14170f',
+        } as CSSProperties
+      }
+    >
       <img
         ref={wordmarkRef}
         className="wordmark"
@@ -310,22 +377,13 @@ export default function App() {
             disabled={loading}
             onClick={() => fileRef.current?.click()}
           >
-            <img src="/design/upload.svg" alt="" />
+            <Plus aria-hidden="true" size={68} strokeWidth={1} />
           </button>
           {loading && (
             <span className="loading-indicator" role="status">
               포스터를 여는 중…
             </span>
           )}
-          {['coral', 'blue', 'pink', 'green'].map((color) => (
-            <img
-              key={color}
-              className={`tape tape-${color}`}
-              src={`/design/tape-${color}.svg`}
-              alt=""
-              draggable={false}
-            />
-          ))}
         </div>
       </section>
       {asset && (
@@ -431,65 +489,129 @@ export default function App() {
                 )}
               </button>
             </div>
-            {menu === 'download' && (
-              <div
-                className="popover download-menu"
-                role="menu"
-                aria-label="다운로드 형식"
-              >
-                {(['png', 'jpg', 'pdf', 'json'] as const).map((format) => (
-                  <button
-                    role="menuitem"
-                    key={format}
-                    onClick={() => void download(format)}
-                  >
-                    {format === 'json'
-                      ? '좌표 · 경로 JSON'
-                      : format.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            )}
-            {menu === 'motion' && (
-              <div
-                className="popover motion-menu"
-                role="menu"
-                aria-label="움직임 감지 방식"
-              >
-                <p>
-                  MacBook에서는 카메라 추정을 사용하세요. 무늬가 있는 정지한
-                  배경이 필요합니다.
-                </p>
-                <button
-                  role="menuitem"
-                  onClick={() => input.startInput('camera')}
+            {menu &&
+              createPortal(
+                <div
+                  ref={menuRef}
+                  className="floating-menu"
+                  style={menuPosition}
                 >
-                  카메라로 움직임 감지
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => input.startInput('sensor')}
-                >
-                  가속도 센서 확인
-                </button>
-                {input.source && (
-                  <button role="menuitem" onClick={input.stopInput}>
-                    움직임 감지 중지
-                  </button>
-                )}
-                <p className="connection-detail" aria-live="polite">
-                  {input.status.message}
-                </p>
-                {input.source === 'camera' && (
-                  <p>
-                    영상은 기기 안에서만 분석합니다. 배경의 움직임도 감지될 수
-                    있습니다.
-                  </p>
-                )}
-              </div>
-            )}
+                  {' '}
+                  {menu === 'download' && (
+                    <div
+                      className="popover download-menu"
+                      role="menu"
+                      aria-label="다운로드 형식"
+                    >
+                      {(['png', 'jpg', 'pdf', 'json'] as const).map(
+                        (format) => (
+                          <button
+                            role="menuitem"
+                            key={format}
+                            onClick={() => void download(format)}
+                          >
+                            {format === 'json'
+                              ? '좌표 · 경로 JSON'
+                              : format.toUpperCase()}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  )}
+                  {menu === 'motion' && (
+                    <div
+                      className="popover motion-menu"
+                      role="menu"
+                      aria-label="움직임 감지 방식"
+                    >
+                      <p>
+                        MacBook에서는 카메라 추정을 사용하세요. 무늬가 있는
+                        정지한 배경이 필요합니다.
+                      </p>
+                      <button
+                        role="menuitem"
+                        onClick={() => input.startInput('camera')}
+                      >
+                        카메라로 움직임 감지
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={() => input.startInput('sensor')}
+                      >
+                        가속도 센서 확인
+                      </button>
+                      {input.source && (
+                        <button role="menuitem" onClick={input.stopInput}>
+                          움직임 감지 중지
+                        </button>
+                      )}
+                      <p className="connection-detail" aria-live="polite">
+                        {input.status.message}
+                      </p>
+                      {input.source === 'camera' && (
+                        <p>
+                          영상은 기기 안에서만 분석합니다. 배경의 움직임도
+                          감지될 수 있습니다.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>,
+                document.body,
+              )}
           </div>
         </aside>
+      )}
+      {cameraPrompt && (
+        <div className="about-backdrop camera-backdrop">
+          <div
+            ref={promptRef}
+            className="camera-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="camera-title"
+            aria-describedby="camera-description"
+          >
+            <span className="dialog-eyebrow">READY TO DISTORT</span>
+            <h1 id="camera-title">카메라 움직임 감지를 켭니다</h1>
+            <p id="camera-description">
+              카메라 영상의 움직임으로 포스터를 연주합니다. 무늬가 있는 정지한
+              배경을 비추고 노트북을 움직여 주세요. 사람이나 배경의 움직임에도
+              반응할 수 있습니다.
+            </p>
+            <p>
+              카메라 영상은 기기 안에서만 분석하며 저장·전송하지 않습니다.
+              마이크는 사용하지 않습니다.
+            </p>
+            {input.source === 'camera' && (
+              <p className="camera-connection" role="status">
+                {input.status.message}
+              </p>
+            )}
+            <div className="dialog-actions">
+              <button
+                onClick={() => input.startInput('camera')}
+                disabled={
+                  input.source === 'camera' &&
+                  input.status.state === 'requesting'
+                }
+              >
+                {input.source === 'camera' &&
+                input.status.state === 'requesting'
+                  ? '카메라 연결 중…'
+                  : '카메라 감지 시작'}
+              </button>
+              <button
+                onClick={() => {
+                  input.stopInput();
+                  setCameraPrompt(false);
+                }}
+              >
+                나중에
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {about && (
         <div className="about-backdrop" onClick={() => setAbout(false)}>
