@@ -6,3 +6,4 @@ dist/
 !.env.example
 .local/
 test-results/
+public/pose/

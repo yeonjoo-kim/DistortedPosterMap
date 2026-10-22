@@ -5,6 +5,7 @@ import { Laptop, Plus, Volume2, VolumeX } from 'lucide-react';
 import { loadPoster } from './lib/extract';
 import { exportMap, exportPoster } from './lib/export';
 import { PosterPhysics } from './lib/physics';
+import { BODY_CONNECTIONS } from './lib/bodyMotion';
 import { DEFAULT_SETTINGS } from './lib/types';
 import type { PosterAsset, Settings, Telemetry } from './lib/types';
 import { useMotionInstrument } from './useMotionInstrument';
@@ -35,9 +36,10 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
-  const wordmarkRef = useRef<HTMLImageElement>(null);
+  const wordmarkRef = useRef<HTMLSpanElement>(null);
   const aboutRef = useRef<HTMLButtonElement>(null);
   const controlsRef = useRef<HTMLElement>(null);
+  const controlHovered = useRef(false);
   const menuTrigger = useRef<HTMLButtonElement | null>(null);
   const engineRef = useRef<PosterPhysics | null>(null);
   const settingsRef = useRef(settings);
@@ -181,6 +183,13 @@ export default function App() {
   }, [asset, driveSound, impactSound]);
 
   useEffect(() => {
+    engineRef.current?.pinFixture(
+      'adjust-box',
+      !!menu || controlHovered.current,
+    );
+  }, [menu]);
+
+  useEffect(() => {
     if (!menu) return;
     menuRef.current
       ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
@@ -293,7 +302,7 @@ export default function App() {
       ) / area,
   );
   const connected = input.status.state === 'connected';
-  const sourceLabel = input.source === 'camera' ? '카메라 추정' : '가속도 센서';
+  const sourceLabel = input.source === 'camera' ? '몸동작 감지' : '가속도 센서';
   const toggleMenu = (
     next: 'motion' | 'download',
     trigger: HTMLButtonElement,
@@ -309,27 +318,27 @@ export default function App() {
 
   return (
     <main
-      className={`studio ${asset ? 'has-poster' : 'is-empty'} ${dark ? 'dark-poster' : ''}`}
+      className={`studio ${asset ? 'has-poster' : 'is-empty'} ${dark ? 'dark-poster' : ''} ${telemetry.active ? 'is-distorting' : ''}`}
       style={
         {
           '--poster-background': background,
+          '--active-font': telemetry.active
+            ? 'MetaAccanthisAlternate'
+            : 'MetaAccanthis',
           '--poster-ink': dark ? '#f8f8f0' : '#14170f',
         } as CSSProperties
       }
     >
-      <img
-        ref={wordmarkRef}
-        className="wordmark"
-        src="/design/wordmark.svg"
-        alt="Poster Distorting Map"
-      />
+      <span ref={wordmarkRef} className="wordmark">
+        Poster Distorting Map
+      </span>
       <button
         ref={aboutRef}
         className="about-button"
         aria-label="About"
         onClick={() => setAbout(true)}
       >
-        <img src="/design/about.svg" alt="About" />
+        About
       </button>
       {asset && (
         <canvas
@@ -391,6 +400,14 @@ export default function App() {
           className="controls"
           ref={controlsRef}
           aria-label="포스터 컨트롤"
+          onPointerEnter={() => {
+            controlHovered.current = true;
+            engineRef.current?.pinFixture('adjust-box', true);
+          }}
+          onPointerLeave={() => {
+            controlHovered.current = false;
+            if (!menu) engineRef.current?.pinFixture('adjust-box', false);
+          }}
         >
           <div
             className={`motion-preview ${connected ? 'connected' : ''}`}
@@ -405,6 +422,31 @@ export default function App() {
               className={input.source === 'camera' ? 'camera-visible' : ''}
               aria-label="움직임 감지용 카메라 미리보기"
             />
+            {input.source === 'camera' && input.sample?.landmarks?.length ? (
+              <svg
+                className="body-overlay"
+                viewBox="0 0 1 1"
+                preserveAspectRatio="none"
+                aria-label="인식된 몸동작"
+              >
+                {BODY_CONNECTIONS.map(([a, b]) => {
+                  const first = input.sample?.landmarks?.[a],
+                    second = input.sample?.landmarks?.[b];
+                  return first &&
+                    second &&
+                    (first.visibility ?? 1) >= 0.55 &&
+                    (second.visibility ?? 1) >= 0.55 ? (
+                    <line
+                      key={`${a}-${b}`}
+                      x1={first.x}
+                      y1={first.y}
+                      x2={second.x}
+                      y2={second.y}
+                    />
+                  ) : null;
+                })}
+              </svg>
+            ) : null}
             <div className="motion-status" role="status">
               <span>{input.source ? sourceLabel : '움직임 감지'}</span>
               <span>
@@ -467,8 +509,8 @@ export default function App() {
               </button>
               <button
                 className={`icon-button ${connected ? 'is-active' : ''}`}
-                aria-label="노트북 움직임 감지"
-                title="노트북 움직임 감지"
+                aria-label="움직임 감지"
+                title="움직임 감지"
                 aria-expanded={menu === 'motion'}
                 aria-haspopup="menu"
                 onClick={(event) => toggleMenu('motion', event.currentTarget)}
@@ -494,7 +536,14 @@ export default function App() {
                 <div
                   ref={menuRef}
                   className="floating-menu"
-                  style={menuPosition}
+                  style={
+                    {
+                      ...menuPosition,
+                      '--active-font': telemetry.active
+                        ? 'MetaAccanthisAlternate'
+                        : 'MetaAccanthis',
+                    } as CSSProperties
+                  }
                 >
                   {' '}
                   {menu === 'download' && (
@@ -525,8 +574,8 @@ export default function App() {
                       aria-label="움직임 감지 방식"
                     >
                       <p>
-                        MacBook에서는 카메라 추정을 사용하세요. 무늬가 있는
-                        정지한 배경이 필요합니다.
+                        카메라를 고정하고 어깨와 팔이 보이도록 춤춰 주세요.
+                        몸동작의 크기로 소리와 파괴가 달라집니다.
                       </p>
                       <button
                         role="menuitem"
@@ -550,8 +599,8 @@ export default function App() {
                       </p>
                       {input.source === 'camera' && (
                         <p>
-                          영상은 기기 안에서만 분석합니다. 배경의 움직임도
-                          감지될 수 있습니다.
+                          사람의 관절 움직임을 기기 안에서만 분석합니다. 영상은
+                          저장하거나 전송하지 않습니다.
                         </p>
                       )}
                     </div>
@@ -573,11 +622,10 @@ export default function App() {
             aria-describedby="camera-description"
           >
             <span className="dialog-eyebrow">READY TO DISTORT</span>
-            <h1 id="camera-title">카메라 움직임 감지를 켭니다</h1>
+            <h1 id="camera-title">춤·몸동작 감지를 켭니다</h1>
             <p id="camera-description">
-              카메라 영상의 움직임으로 포스터를 연주합니다. 무늬가 있는 정지한
-              배경을 비추고 노트북을 움직여 주세요. 사람이나 배경의 움직임에도
-              반응할 수 있습니다.
+              카메라를 고정하고 어깨와 팔, 가능하면 전신이 보이도록 서 주세요.
+              몸동작이 클수록 헤비메탈 기타 소리와 포스터 파괴가 강해집니다.
             </p>
             <p>
               카메라 영상은 기기 안에서만 분석하며 저장·전송하지 않습니다.
@@ -631,7 +679,7 @@ export default function App() {
             </button>
             <p>Poster Distorting Map</p>
             <p>
-              포스터를 올리고 노트북의 움직임으로 연주하세요. 작은 흔들림은
+              포스터를 올리고 카메라 앞에서 몸동작으로 연주하세요. 작은 흔들림은
               부드럽게, 큰 흔들림은 조각으로 남습니다.
             </p>
             <p>파일과 카메라 영상은 기기 안에서만 처리됩니다.</p>

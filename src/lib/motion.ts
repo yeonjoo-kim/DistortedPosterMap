@@ -8,6 +8,8 @@ export interface MotionSample {
   source: MotionSource;
   magnitude: number;
   confidence: number;
+  tracking?: 'body';
+  landmarks?: Array<Point & { visibility?: number }>;
 }
 export type InputStatus = {
   state:

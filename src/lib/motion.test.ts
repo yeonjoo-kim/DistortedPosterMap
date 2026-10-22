@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accelerationSample, startDeviceMotion } from './motion';
 import type { InputStatus, MotionSample } from './motion';
-import { cameraStrength, estimateCameraMotion } from './vision';
 import { distortionCurve, soundProfile } from './instrument';
 import { materialResponse } from './math';
 
@@ -90,68 +89,6 @@ describe('actual acceleration input', () => {
     vi.advanceTimersByTime(50);
     emit();
     expect(samples).toHaveLength(count);
-  });
-});
-
-function texture(width: number, height: number) {
-  let seed = 9137;
-  return Uint8Array.from({ length: width * height }, () => {
-    seed = (seed * 16807) % 2147483647;
-    return (seed % 220) + 15;
-  });
-}
-function shifted(
-  source: Uint8Array,
-  width: number,
-  height: number,
-  dx: number,
-  dy: number,
-) {
-  const output = new Uint8Array(source.length);
-  for (let y = 0; y < height; y++)
-    for (let x = 0; x < width; x++) {
-      const sx = x - dx,
-        sy = y - dy;
-      if (sx >= 0 && sy >= 0 && sx < width && sy < height)
-        output[y * width + x] = source[sy * width + sx];
-    }
-  return output;
-}
-describe('camera relative-motion estimation', () => {
-  it('amplifies small tracked movement while keeping still and unreliable scenes quiet', () => {
-    expect(cameraStrength(0, 1)).toBe(0);
-    expect(cameraStrength(12, 1)).toBeGreaterThan(0.25);
-    expect(cameraStrength(40, 1)).toBeGreaterThan(cameraStrength(12, 1));
-    expect(cameraStrength(100, 0.3)).toBe(0);
-    expect(cameraStrength(NaN, 1)).toBe(0);
-  });
-  it('recovers a global scene shift across the frame', () => {
-    const a = texture(128, 96),
-      b = shifted(a, 128, 96, 3, -2);
-    const flow = estimateCameraMotion(a, b, 128, 96);
-    expect(flow.dx).toBeCloseTo(3, 0);
-    expect(flow.dy).toBeCloseTo(-2, 0);
-    expect(flow.confidence).toBeGreaterThan(0.75);
-  });
-  it('keeps a still scene quiet and rejects an untextured background', () => {
-    const a = texture(128, 96);
-    expect(estimateCameraMotion(a, a, 128, 96).magnitude).toBe(0);
-    expect(
-      estimateCameraMotion(
-        new Uint8Array(128 * 96).fill(120),
-        new Uint8Array(128 * 96).fill(150),
-        128,
-        96,
-      ).confidence,
-    ).toBe(0);
-  });
-  it('does not treat a small moving foreground patch as global laptop motion', () => {
-    const a = texture(128, 96),
-      b = new Uint8Array(a),
-      moved = shifted(a, 128, 96, 4, 1);
-    for (let y = 35; y < 60; y++)
-      for (let x = 48; x < 78; x++) b[y * 128 + x] = moved[y * 128 + x];
-    expect(estimateCameraMotion(a, b, 128, 96).magnitude).toBeLessThan(0.5);
   });
 });
 

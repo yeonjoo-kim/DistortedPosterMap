@@ -70,6 +70,7 @@ export class PosterPhysics {
     height: number;
   }[] = [];
   private walls: Matter.Body[] = [];
+  private pinnedFixtures = new Set<string>();
   private toBreak = new Set<Entity>();
   private frame = 0;
   private peak = 0;
@@ -207,6 +208,16 @@ export class PosterPhysics {
     );
   }
 
+  pinFixture(id: string, pinned: boolean) {
+    if (pinned) this.pinnedFixtures.add(id);
+    else this.pinnedFixtures.delete(id);
+    const fixture = this.fixtures.find((item) => item.id === id);
+    if (fixture) {
+      Matter.Body.setStatic(fixture.body, pinned || !this.active);
+      if (!pinned && this.active) Matter.Sleeping.set(fixture.body, false);
+    }
+  }
+
   applyMotion(sample: MotionSample) {
     this.shake(sample.strength, sample.direction);
     this.lastInput = { ...sample, direction: { ...sample.direction } };
@@ -224,7 +235,8 @@ export class PosterPhysics {
     }
     const profile = materialResponse(strength);
     // Give the interface room to traverse the whole screen even with vertical input.
-    for (const [index, { body }] of this.fixtures.entries()) {
+    for (const [index, { id, body }] of this.fixtures.entries()) {
+      if (this.pinnedFixtures.has(id)) continue;
       Matter.Body.setStatic(body, false);
       Matter.Sleeping.set(body, false);
       const inward = clamp(
@@ -656,7 +668,7 @@ export class PosterPhysics {
       }
       if (this.settings.showLabels || selected) {
         ctx.save();
-        ctx.font = `${9 * scale}px monospace`;
+        ctx.font = `${10 * scale}px ${this.active ? 'MetaAccanthisAlternate' : 'MetaAccanthis'}, monospace`;
         ctx.textBaseline = 'top';
         const label = `${entity.element.id.toUpperCase()}  ${entity.body.position.x.toFixed(0)}, ${entity.body.position.y.toFixed(0)}`;
         const labelWidth = ctx.measureText(label).width + 10 * scale;
