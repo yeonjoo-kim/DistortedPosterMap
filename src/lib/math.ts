@@ -15,6 +15,8 @@ export function clayOffset(
   return smooth * (1 - blend) + zigzagOffset(y, height, amplitude) * blend;
 }
 
+export const MATERIAL_MIX = { zigzag: 0.2, fracture: 0.8 } as const;
+
 export function materialResponse(amplitude: number) {
   const strength = shakeImpulse(amplitude);
   return {
@@ -22,7 +24,7 @@ export function materialResponse(amplitude: number) {
     gravity: 0.24 + strength * 0.82,
     restitution: 0.035 + strength * 0.24,
     sharpness: strength,
-    canFracture: strength >= 0.65,
+    canFracture: strength >= 0.9 - MATERIAL_MIX.fracture * 0.5,
   };
 }
 export function zigzagOffset(y: number, height: number, amplitude: number) {

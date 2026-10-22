@@ -28,6 +28,7 @@ export interface Settings {
   original: boolean;
 }
 export interface ElementTelemetry {
+  areaWeight: number;
   id: string;
   label: string;
   x: number;
@@ -53,7 +54,7 @@ export interface Telemetry {
   deformation: number;
 }
 export const DEFAULT_SETTINGS: Settings = {
-  showPaths: true,
+  showPaths: false,
   showLabels: false,
   paused: false,
   original: false,

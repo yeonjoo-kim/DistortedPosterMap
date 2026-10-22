@@ -83,4 +83,45 @@ describe('physical workflow', () => {
     ).toBe(true);
     physics.dispose();
   });
+  it('keeps gentle repeated input within a small warp envelope', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    for (let i = 0; i < 50; i++) physics.shake(0.2);
+    expect(physics.telemetry().elements[0].warp).toBeGreaterThan(0);
+    expect(
+      physics.telemetry().elements[0].warp / asset.elements[0].width,
+    ).toBeLessThan(0.06);
+    physics.dispose();
+  });
+
+  it('lets poster pieces cross the paper edge and collide with the expanded screen boundary', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    physics.setBounds({ x: -300, y: -100, width: 1000, height: 800 });
+    physics.shake(0.4, { x: 1, y: 0 });
+    const body = physics.entities[0].body;
+    Matter.Body.setPosition(body, { x: 580, y: 300 });
+    Matter.Body.setVelocity(body, { x: 12, y: 0 });
+    for (let i = 0; i < 40; i++) physics.update(1000 / 60);
+    expect(body.position.x).toBeGreaterThan(asset.width);
+    expect(body.bounds.max.x).toBeLessThan(702);
+    physics.dispose();
+  });
+
+  it('moves interface bodies with the same input without fracturing them', () => {
+    const physics = new PosterPhysics(
+      { ...asset, elements: [] },
+      { ...DEFAULT_SETTINGS },
+    );
+    physics.setFixtures([
+      { id: 'adjust-box', x: 200, y: 100, width: 90, height: 120 },
+    ]);
+    physics.shake(1, { x: 1, y: 1 });
+    for (let i = 0; i < 150; i++) physics.update(1000 / 60);
+    const fixture = physics.mapData().fixtures[0];
+    expect(physics.fixtures).toHaveLength(1);
+    expect(fixture.breakable).toBe(false);
+    expect(fixture.y).toBeGreaterThan(100);
+    expect(physics.fixtures[0].body.bounds.max.y).toBeLessThan(602);
+    expect(physics.entities).toHaveLength(0);
+    physics.dispose();
+  });
 });

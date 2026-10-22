@@ -1,6 +1,12 @@
 import Matter from 'matter-js';
 import { canvas } from './demo';
-import { clamp, shakeImpulse, clayOffset, materialResponse } from './math';
+import {
+  clamp,
+  shakeImpulse,
+  clayOffset,
+  materialResponse,
+  MATERIAL_MIX,
+} from './math';
 import type { MotionSample } from './motion';
 import type {
   ElementTelemetry,
@@ -25,6 +31,7 @@ interface Entity {
   scaleY: number;
   strain: number;
   releaseThreshold: number;
+  areaWeight: number;
   parentId?: string;
   sourceMap?: {
     clipX: number;
@@ -54,6 +61,15 @@ export class PosterPhysics {
   active = false;
   lastInput: MotionSample | null = null;
   onImpact?: (strength: number) => void;
+  bounds = { x: 0, y: 0, width: 0, height: 0 };
+  fixtures: {
+    id: string;
+    body: Matter.Body;
+    origin: Point;
+    width: number;
+    height: number;
+  }[] = [];
+  private walls: Matter.Body[] = [];
   private toBreak = new Set<Entity>();
   private frame = 0;
   private peak = 0;
@@ -63,12 +79,7 @@ export class PosterPhysics {
     this.asset = asset;
     this.settings = { ...settings };
     const { width: w, height: h } = asset;
-    Matter.Composite.add(this.engine.world, [
-      Matter.Bodies.rectangle(w / 2, h + 40, w + 160, 80, { isStatic: true }),
-      Matter.Bodies.rectangle(-40, h / 2, 80, h + 160, { isStatic: true }),
-      Matter.Bodies.rectangle(w + 40, h / 2, 80, h + 160, { isStatic: true }),
-      Matter.Bodies.rectangle(w / 2, -40, w + 160, 80, { isStatic: true }),
-    ]);
+    this.setBounds({ x: 0, y: 0, width: w, height: h });
     asset.elements.forEach((element, index) => {
       const body = Matter.Bodies.rectangle(
         element.x,
@@ -91,6 +102,7 @@ export class PosterPhysics {
         scaleX: 1,
         scaleY: 1,
         strain: 0,
+        areaWeight: element.width * element.height,
         releaseThreshold:
           0.035 +
           (((index * 7) % Math.max(1, asset.elements.length)) /
@@ -120,18 +132,22 @@ export class PosterPhysics {
             entity.compression + impact * 0.36,
           );
           entity.warp = Math.min(
-            entity.element.width * 0.27,
-            entity.warp + impact * Math.min(18, entity.element.width * 0.12),
+            entity.element.width * 0.27 * MATERIAL_MIX.zigzag,
+            entity.warp +
+              MATERIAL_MIX.zigzag *
+                impact *
+                Math.min(18, entity.element.width * 0.12),
           );
           entity.damage = Math.min(
             1,
-            entity.damage + impact * impact * (0.1 + this.peak * 0.35),
+            entity.damage +
+              impact * impact * (0.1 + this.peak * MATERIAL_MIX.fracture),
           );
           if (
             !entity.parentId &&
-            this.peak >= 0.65 &&
-            this.peakAge < 1.8 &&
-            speed > 3.7 &&
+            materialResponse(this.peak).canFracture &&
+            this.peakAge < 2.8 &&
+            speed > 4.5 - MATERIAL_MIX.fracture * 2.5 &&
             entity.element.width > 20 &&
             entity.element.height > 14
           )
@@ -139,6 +155,56 @@ export class PosterPhysics {
         }
       }
     });
+  }
+
+  setBounds(bounds: { x: number; y: number; width: number; height: number }) {
+    this.bounds = bounds;
+    this.walls.forEach((body) =>
+      Matter.Composite.remove(this.engine.world, body),
+    );
+    const { x, y, width: w, height: h } = bounds;
+    this.walls = [
+      Matter.Bodies.rectangle(x + w / 2, y + h + 40, w + 160, 80, {
+        isStatic: true,
+      }),
+      Matter.Bodies.rectangle(x - 40, y + h / 2, 80, h + 160, {
+        isStatic: true,
+      }),
+      Matter.Bodies.rectangle(x + w + 40, y + h / 2, 80, h + 160, {
+        isStatic: true,
+      }),
+      Matter.Bodies.rectangle(x + w / 2, y - 40, w + 160, 80, {
+        isStatic: true,
+      }),
+    ];
+    Matter.Composite.add(this.engine.world, this.walls);
+  }
+
+  setFixtures(
+    items: {
+      id: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }[],
+  ) {
+    this.fixtures.forEach(({ body }) =>
+      Matter.Composite.remove(this.engine.world, body),
+    );
+    this.fixtures = items.map(({ id, x, y, width, height }) => {
+      const body = Matter.Bodies.rectangle(x, y, width, height, {
+        friction: 0.5,
+        frictionAir: 0.07,
+        restitution: 0.08,
+      });
+      Matter.Body.setStatic(body, true);
+      return { id, body, origin: { x, y }, width, height };
+    });
+    Matter.Composite.add(
+      this.engine.world,
+      this.fixtures.map(({ body }) => body),
+    );
   }
 
   applyMotion(sample: MotionSample) {
@@ -157,6 +223,22 @@ export class PosterPhysics {
       this.peakAge = 0;
     }
     const profile = materialResponse(strength);
+    for (const { body } of this.fixtures) {
+      Matter.Body.setStatic(body, false);
+      Matter.Sleeping.set(body, false);
+      Matter.Body.setVelocity(body, {
+        x: clamp(body.velocity.x + direction.x * strength * 11, -24, 24),
+        y: clamp(body.velocity.y + direction.y * strength * 9, -24, 24),
+      });
+      Matter.Body.setAngularVelocity(
+        body,
+        clamp(
+          body.angularVelocity + direction.x * strength * 0.008,
+          -0.035,
+          0.035,
+        ),
+      );
+    }
     for (const entity of this.entities) {
       entity.strain += strength * 0.52;
       if (
@@ -191,8 +273,11 @@ export class PosterPhysics {
         ),
       );
       entity.warp = Math.min(
-        entity.element.width * 0.27,
-        entity.warp + strength * Math.min(14, entity.element.width * 0.09),
+        entity.element.width * 0.27 * MATERIAL_MIX.zigzag,
+        entity.warp +
+          MATERIAL_MIX.zigzag *
+            strength *
+            Math.min(14, entity.element.width * 0.09),
       );
       entity.sharpness = Math.max(entity.sharpness, strength);
       entity.compression = Math.min(
@@ -213,7 +298,7 @@ export class PosterPhysics {
     Matter.Engine.update(this.engine, Math.max(0.1, dt * 1000));
     this.frame++;
     if (this.entities.length < 220)
-      for (const entity of [...this.toBreak].slice(0, 3)) {
+      for (const entity of [...this.toBreak].slice(0, 6)) {
         if (this.entities.length + 3 > 220) break;
         this.fracture(entity);
       }
@@ -253,12 +338,22 @@ export class PosterPhysics {
         Matter.Body.setPosition(entity.body, entity.origin);
         Matter.Body.setVelocity(entity.body, { x: 0, y: 0 });
       } else if (
-        Math.abs(entity.body.position.x) > this.asset.width * 3 ||
-        Math.abs(entity.body.position.y) > this.asset.height * 3
+        Math.abs(entity.body.position.x - this.bounds.x) >
+          this.bounds.width * 3 ||
+        Math.abs(entity.body.position.y - this.bounds.y) >
+          this.bounds.height * 3
       ) {
         Matter.Body.setPosition(entity.body, {
-          x: clamp(entity.body.position.x, 5, this.asset.width - 5),
-          y: clamp(entity.body.position.y, 5, this.asset.height - 5),
+          x: clamp(
+            entity.body.position.x,
+            this.bounds.x + 5,
+            this.bounds.x + this.bounds.width - 5,
+          ),
+          y: clamp(
+            entity.body.position.y,
+            this.bounds.y + 5,
+            this.bounds.y + this.bounds.height - 5,
+          ),
         });
         Matter.Body.setVelocity(entity.body, { x: 0, y: 0 });
       }
@@ -405,6 +500,13 @@ export class PosterPhysics {
         scaleY: 1,
         strain: 1,
         releaseThreshold: 0,
+        areaWeight:
+          (entity.areaWeight *
+            Math.abs(
+              (points[1].x - points[0].x) * (points[2].y - points[0].y) -
+                (points[2].x - points[0].x) * (points[1].y - points[0].y),
+            )) /
+          (2 * texture.width * texture.height),
         parentId: el.id,
         sourceMap: {
           clipX: minX,
@@ -535,13 +637,13 @@ export class PosterPhysics {
         const labelWidth = ctx.measureText(label).width + 10 * scale;
         const x = clamp(
             entity.body.position.x - labelWidth / 2,
-            2,
-            width - labelWidth - 2,
+            this.bounds.x + 2,
+            this.bounds.x + this.bounds.width - labelWidth - 2,
           ),
           y = clamp(
             entity.body.position.y - 12 * scale,
-            2,
-            height - 16 * scale,
+            this.bounds.y + 2,
+            this.bounds.y + this.bounds.height - 16 * scale,
           );
         ctx.fillStyle = selected ? '#f4512c' : '#252621';
         ctx.fillRect(x, y, labelWidth, 15 * scale);
@@ -553,12 +655,13 @@ export class PosterPhysics {
   }
 
   snapshot(overlays: boolean, multiplier = 2) {
-    const output = canvas(
-        this.asset.width * multiplier,
-        this.asset.height * multiplier,
-      ),
+    const { x, y, width, height } = this.bounds;
+    const output = canvas(width * multiplier, height * multiplier),
       ctx = output.getContext('2d')!;
+    ctx.fillStyle = '#f6ffbd';
+    ctx.fillRect(0, 0, output.width, output.height);
     ctx.scale(multiplier, multiplier);
+    ctx.translate(-x, -y);
     this.render(ctx, overlays);
     return output;
   }
@@ -588,6 +691,7 @@ export class PosterPhysics {
           damage,
           scaleX,
           scaleY,
+          areaWeight,
         }): ElementTelemetry => ({
           id: element.id,
           label: element.label,
@@ -604,6 +708,7 @@ export class PosterPhysics {
           damage,
           scaleX,
           scaleY,
+          areaWeight,
           path: path.map((p) => ({ ...p })),
         }),
       ),
@@ -669,6 +774,17 @@ export class PosterPhysics {
       version: 2,
       material:
         'damp clay — gravity, plastic deformation and collision fracture',
+      materialMix: MATERIAL_MIX,
+      bounds: { ...this.bounds },
+      fixtures: this.fixtures.map(({ id, body, width, height }) => ({
+        id,
+        x: body.position.x,
+        y: body.position.y,
+        rotation: body.angle,
+        width,
+        height,
+        breakable: false,
+      })),
       input: this.lastInput,
       units: 'poster pixels',
       width: this.asset.width,

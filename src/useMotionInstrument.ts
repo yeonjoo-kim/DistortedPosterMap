@@ -5,7 +5,7 @@ import { startDeviceMotion } from './lib/motion';
 import type { InputStatus, MotionSample } from './lib/motion';
 import { startCameraMotion } from './lib/vision';
 import type { PosterPhysics } from './lib/physics';
-import type { Point, Settings } from './lib/types';
+import type { Settings } from './lib/types';
 
 export function useMotionInstrument(
   engine: RefObject<PosterPhysics | null>,
@@ -114,22 +114,6 @@ export function useMotionInstrument(
     }
   }, [unlockSound]);
 
-  const testMotion = useCallback(
-    (
-      strength = 0.46,
-      direction: Point = { x: Math.random() > 0.5 ? 0.9 : -0.9, y: -0.9 },
-    ) => {
-      if (soundRef.current === 'locked') void unlockSound();
-      receive({
-        strength,
-        direction,
-        source: 'test',
-        magnitude: strength,
-        confidence: 1,
-      });
-    },
-    [receive, unlockSound],
-  );
   const driveSound = useCallback(
     (strength: number) => {
       audio.current.drive(
@@ -176,7 +160,6 @@ export function useMotionInstrument(
     startInput,
     stopInput,
     toggleSound,
-    testMotion,
     driveSound,
     impactSound,
   };

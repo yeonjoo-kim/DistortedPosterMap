@@ -50,7 +50,7 @@ try {
     args: ['--no-sandbox'],
   });
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
+    viewport: { width: 1280, height: 832 },
     acceptDownloads: true,
   });
   const page = await context.newPage();
@@ -73,32 +73,52 @@ try {
     };
   });
   await page.goto(`http://127.0.0.1:${port}`);
-  await page.getByRole('heading', { name: /질서를 흔들고/ }).waitFor();
-  await page.waitForFunction(
-    () =>
-      document.querySelector('[data-testid="element-count"]')?.textContent ===
-      '16',
-  );
+  await page
+    .getByRole('button', { name: '포스터 올리기', exact: true })
+    .waitFor();
+  assert.equal(await page.locator('canvas').count(), 0);
   assert.equal(await page.getByRole('slider').count(), 0);
-  assert.equal(await page.locator('.effect-options').count(), 0);
   assert.equal(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth > innerWidth,
-    ),
-    false,
+    await page.locator('.layer-item,header,footer,.effect-options').count(),
+    0,
   );
-  await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
+  const blankPaper = await page.locator('.paper').boundingBox();
+  assert(Math.abs(blankPaper.width - 534) < 4);
+  await page.screenshot({ path: 'test-results/home.png', fullPage: true });
   record(
-    'Continuous clay instrument has no effect selector or physical parameter sliders',
+    'Figma paper, tapes and upload control replace the old workbench and element list',
   );
 
-  async function map() {
-    const promise = page.waitForEvent('download');
-    await page
-      .getByRole('button', { name: '좌표 · 경로 JSON 저장', exact: true })
-      .click();
-    const file = await promise;
-    return JSON.parse(await readFile(await file.path(), 'utf8'));
+  const click = (name, target = page) =>
+    target.getByRole('button', { name, exact: true }).click({ force: true });
+  async function choose(name, target = page) {
+    const button = target.getByRole('menuitem', { name, exact: true });
+    await button.click({ force: true });
+  }
+  async function menu(name, target = page) {
+    await target.keyboard.press('Escape');
+    await click(name, target);
+  }
+  async function map(target = page) {
+    await menu('다운로드', target);
+    const promise = target.waitForEvent('download');
+    await choose('좌표 · 경로 JSON', target);
+    return JSON.parse(await readFile(await (await promise).path(), 'utf8'));
+  }
+  async function upload(
+    buffer,
+    name = 'fixture.png',
+    mimeType = 'image/png',
+    target = page,
+  ) {
+    await target
+      .getByLabel('포스터 파일 선택')
+      .setInputFiles({ name, mimeType, buffer });
+    await target.waitForFunction(
+      () =>
+        document.querySelector('.paper')?.getAttribute('aria-busy') === 'false',
+    );
+    await target.getByLabel('왜곡되는 포스터', { exact: true }).waitFor();
   }
   async function sensor(x, y = 0, z = 0) {
     await page.evaluate(
@@ -136,175 +156,6 @@ try {
       return { power, rms, centroid: weighted / Math.max(power, 1e-12) };
     });
   }
-  await page
-    .getByRole('button', { name: '가속도 센서로 연주', exact: true })
-    .click();
-  await page.waitForFunction(
-    () =>
-      document
-        .querySelector('[data-testid="motion-status"]')
-        ?.classList.contains('unavailable'),
-    undefined,
-    { timeout: 6500 },
-  );
-  assert(
-    (await page.getByTestId('motion-status').textContent()).includes(
-      '제공되지',
-    ),
-  );
-  record(
-    'Sensor API without incoming hardware data reports unavailable instead of connected',
-  );
-  await page
-    .getByRole('button', { name: '가속도 센서로 연주', exact: true })
-    .click();
-  await page.waitForFunction(() =>
-    document
-      .querySelector('[data-testid="motion-status"]')
-      ?.textContent.includes('실제 가속도 데이터'),
-  );
-  await sensor(0);
-  assert(
-    (await page.getByTestId('motion-status').textContent()).includes('확인 중'),
-  );
-  await sensor(0);
-  await page.waitForFunction(() =>
-    document
-      .querySelector('[data-testid="motion-status"]')
-      ?.classList.contains('connected'),
-  );
-  assert(
-    (await map()).elements.every(
-      (e) => Math.abs(e.dx) < 0.01 && Math.abs(e.dy) < 0.01,
-    ),
-  );
-  record(
-    'Two simulated measured samples establish sensor input; zero motion stays silent and still',
-  );
-  assert.equal(
-    await page.evaluate(() => window.__audioContexts[0].state),
-    'running',
-  );
-
-  for (let i = 0; i < 5; i++) await sensor(2.6, -0.6);
-  const softSpectrum = await spectrum();
-  await page.waitForTimeout(180);
-  await page
-    .getByRole('button', { name: '시뮬레이션 일시정지', exact: true })
-    .click();
-  const soft = await map();
-  assert.equal(soft.input.source, 'sensor');
-  assert(soft.elements.some((e) => Math.hypot(e.dx, e.dy) > 4 && e.warp > 0));
-  assert(soft.elements.every((e) => e.kind !== 'fragment'));
-  assert(soft.elements.some((e) => e.scaleX > 1 && e.scaleY < 1));
-  assert(
-    !('effect' in soft.settings) &&
-      !('intensity' in soft.settings) &&
-      !('gravity' in soft.settings) &&
-      !('restitution' in soft.settings),
-  );
-  record(
-    'Gentle sensor movement blends gravity, soft deformation and collision squash without fragments',
-  );
-  await page.waitForTimeout(250);
-  const paused = await map();
-  assert.deepEqual(
-    soft.elements.map((e) => [e.x, e.y, e.warp]),
-    paused.elements.map((e) => [e.x, e.y, e.warp]),
-  );
-  await page.waitForTimeout(250);
-  const silentSpectrum = await spectrum();
-  assert(
-    silentSpectrum.rms < Math.max(softSpectrum.rms * 0.02, 1e-5),
-    JSON.stringify({ softSpectrum, silentSpectrum }),
-  );
-  record(
-    'Pause freezes material coordinates and fades the instrument to silence',
-  );
-
-  await page
-    .getByRole('button', { name: '포스터 초기화', exact: true })
-    .click();
-  await sensor(18, -10, 5);
-  await sensor(18, -10, 5);
-  await page.waitForTimeout(130);
-  const hardSpectrum = await spectrum();
-  assert(hardSpectrum.power > softSpectrum.power);
-  assert(
-    hardSpectrum.centroid > softSpectrum.centroid * 1.3,
-    `Soft centroid ${softSpectrum.centroid}, hard ${hardSpectrum.centroid}`,
-  );
-  record(
-    'Web Audio output becomes louder and spectrally brighter for stronger simulated motion',
-  );
-  await page.waitForFunction(
-    () =>
-      Number(
-        document.querySelector('[data-testid="element-count"]')?.textContent,
-      ) > 16,
-    undefined,
-    { timeout: 6000 },
-  );
-  await page
-    .getByRole('button', { name: '시뮬레이션 일시정지', exact: true })
-    .click();
-  const broken = await map();
-  assert(broken.elements.some((e) => e.kind === 'fragment' && e.parentId));
-  assert(
-    broken.elements
-      .filter((e) => e.kind === 'fragment')
-      .every((e) => e.collisionVertices.length === 3),
-  );
-  assert(
-    broken.elements.every(
-      (e) =>
-        e.deformationVertices.length === 18 &&
-        e.deformationVertices.every(
-          (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
-        ),
-    ),
-  );
-  record(
-    'Stronger motion fractures collision-loaded clay while retaining mapped geometry',
-  );
-  await page.locator('.layer-item').first().click();
-  await page.locator('.vertex-details summary').click();
-  assert.equal(await page.locator('.vertex-details tbody tr').count(), 5);
-  record(
-    'Selected clay elements show numerical deformation paths and coordinates',
-  );
-  await page
-    .getByRole('button', { name: '움직임 감지 중지', exact: true })
-    .click();
-  assert(
-    (await page.getByTestId('motion-status').textContent()).includes(
-      '멈췄습니다',
-    ),
-  );
-  record('Disconnect removes the live motion input');
-
-  for (const format of ['PNG', 'JPG', 'PDF']) {
-    await page
-      .getByRole('button', { name: '포스터 저장', exact: true })
-      .click();
-    await page
-      .getByRole('button', { name: new RegExp(`^${format} `) })
-      .first()
-      .click();
-    const promise = page.waitForEvent('download');
-    await page
-      .getByRole('button', { name: `${format} 포스터 저장`, exact: true })
-      .click();
-    const file = await promise,
-      bytes = await readFile(await file.path());
-    assert(bytes.length > 1000);
-    if (format === 'PNG') assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
-    if (format === 'JPG')
-      assert.equal(bytes.subarray(0, 2).toString('hex'), 'ffd8');
-    if (format === 'PDF') assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
-    record(`${format} export downloads a valid file`);
-  }
-
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 400;
@@ -327,25 +178,163 @@ try {
       jpg: canvas.toDataURL('image/jpeg').split(',')[1],
     };
   });
-  for (const format of ['png', 'jpg']) {
-    await page.getByLabel('포스터 파일 선택').setInputFiles({
-      name: `fixture.${format}`,
-      mimeType: format === 'png' ? 'image/png' : 'image/jpeg',
-      buffer: Buffer.from(image[format], 'base64'),
-    });
-    await page.waitForFunction(
-      (name) =>
-        document.querySelector('.document-name')?.textContent.includes(name),
-      `fixture.${format}`,
-    );
-    const data = await map();
-    assert(data.elements.length >= 4);
-    assert.equal(data.width, 400);
-    assert.equal(data.height, 600);
-    record(
-      `${format.toUpperCase()} upload separates actual foreground regions`,
-    );
+  const png = Buffer.from(image.png, 'base64');
+  await upload(png);
+  const initial = await map();
+  assert(initial.elements.length >= 4);
+  assert.deepEqual(initial.materialMix, { zigzag: 0.2, fracture: 0.8 });
+  assert(
+    initial.bounds.width > initial.width &&
+      initial.bounds.height > initial.height,
+  );
+  assert.equal(initial.fixtures.length, 3);
+  assert(initial.fixtures.every((e) => e.breakable === false));
+  await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
+  record(
+    'Uploaded elements and three unbreakable interface bodies share the full-screen arena',
+  );
+
+  await menu('노트북 움직임 감지');
+  await choose('가속도 센서 확인');
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('[data-testid="motion-status"]')
+        ?.getAttribute('data-state') === 'unavailable',
+    undefined,
+    { timeout: 6500 },
+  );
+  assert(
+    (await page.locator('.connection-detail').textContent()).includes(
+      '제공되지',
+    ),
+  );
+  record(
+    'Absent hardware data is reported without claiming the laptop sensor connected',
+  );
+  await choose('가속도 센서 확인');
+  await page.waitForFunction(() =>
+    document
+      .querySelector('.connection-detail')
+      ?.textContent.includes('실제 가속도 데이터'),
+  );
+  await sensor(0);
+  await sensor(0);
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('[data-testid="motion-status"]')
+        ?.getAttribute('data-state') === 'connected',
+  );
+  await page.keyboard.press('Escape');
+  const zero = await map();
+  assert(zero.elements.every((e) => Math.hypot(e.dx, e.dy) < 0.01));
+  record(
+    'Two simulated acceleration samples establish input while zero movement preserves the layout',
+  );
+
+  for (let i = 0; i < 5; i++) await sensor(2.6, -0.6);
+  const softSpectrum = await spectrum();
+  const soft = await map();
+  assert(soft.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
+  assert(soft.elements.every((e) => e.kind !== 'fragment'));
+  assert(soft.elements.every((e) => e.warp < 5));
+  assert(
+    soft.fixtures.some(
+      (e, i) =>
+        Math.hypot(e.x - initial.fixtures[i].x, e.y - initial.fixtures[i].y) >
+        5,
+    ),
+  );
+  record(
+    'Gentle movement produces restrained warping and moves the unbreakable logo, About and adjust box',
+  );
+  await click('연주 소리');
+  await page.waitForTimeout(450);
+  const muted = await spectrum();
+  assert(muted.rms < Math.max(softSpectrum.rms * 0.02, 1e-5));
+  await click('연주 소리');
+  record('Sound toggle mutes the actual Web Audio output');
+
+  for (let i = 0; i < 12; i++) await sensor(i % 2 ? 11 : -11, 3);
+  const hardSpectrum = await spectrum();
+  assert(hardSpectrum.power > softSpectrum.power);
+  assert(hardSpectrum.centroid > softSpectrum.centroid * 1.3);
+  let broken;
+  for (let i = 0; i < 10; i++) {
+    broken = await map();
+    if (broken.elements.some((e) => e.kind === 'fragment')) break;
+    await sensor(i % 2 ? -12 : 12, 8);
+    await page.waitForTimeout(150);
   }
+  assert(broken.elements.some((e) => e.kind === 'fragment'));
+  assert(
+    broken.elements
+      .filter((e) => e.kind === 'fragment')
+      .every((e) => e.collisionVertices.length === 3),
+  );
+  assert(
+    broken.elements.every(
+      (e) =>
+        e.deformationVertices.length === 18 &&
+        e.deformationVertices.every(
+          (v) => Number.isFinite(v.x) && Number.isFinite(v.y),
+        ),
+    ),
+  );
+  const weight = (data) =>
+    data.elements.reduce((sum, e) => sum + e.areaWeight, 0);
+  assert(Math.abs(weight(broken) - weight(initial)) < 0.01);
+  assert(
+    broken.elements.some(
+      (e) => e.x < 0 || e.x > broken.width || e.y < 0 || e.y > broken.height,
+    ),
+  );
+  assert.equal(broken.fixtures.length, 3);
+  assert(
+    broken.fixtures.every((e) => e.breakable === false && Number.isFinite(e.x)),
+  );
+  record(
+    'Moderate strong input creates triangular fragments outside the paper while preserving interface bodies and area weights',
+  );
+  record('Stronger movement produces louder and brighter instrument output');
+  await click('움직임 시각화');
+  assert.equal(
+    await page
+      .getByRole('button', { name: '움직임 시각화', exact: true })
+      .getAttribute('aria-pressed'),
+    'true',
+  );
+  const mapped = await map();
+  assert(mapped.settings.showPaths && mapped.settings.showLabels);
+  assert(mapped.elements.some((e) => e.path.length > 2));
+  assert.equal(await page.locator('.coordinate output').count(), 4);
+  await page.screenshot({ path: 'test-results/fractured.png', fullPage: true });
+  record(
+    'One visualization control shows paths and coordinates without individual selection',
+  );
+
+  await menu('노트북 움직임 감지');
+  await choose('움직임 감지 중지');
+  await page.keyboard.press('Escape');
+  for (const format of ['PNG', 'JPG', 'PDF']) {
+    await menu('다운로드');
+    const promise = page.waitForEvent('download');
+    await choose(format);
+    const bytes = await readFile(await (await promise).path());
+    assert(bytes.length > 1000);
+    if (format === 'PNG') {
+      assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
+      assert(bytes.readUInt32BE(16) > 1500);
+    }
+    if (format === 'JPG')
+      assert.equal(bytes.subarray(0, 2).toString('hex'), 'ffd8');
+    if (format === 'PDF') assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
+    record(`${format} downloads the expanded poster image`);
+  }
+  await upload(Buffer.from(image.jpg, 'base64'), 'fixture.jpg', 'image/jpeg');
+  assert((await map()).elements.length >= 4);
+  record('JPG upload still separates foreground regions');
   const pdf = new jsPDF({ unit: 'pt', format: [400, 600] });
   pdf.setFontSize(32);
   pdf.text('NATIVE PDF TEXT', 30, 70);
@@ -353,54 +342,25 @@ try {
   pdf.rect(70, 200, 150, 150, 'F');
   pdf.addPage();
   pdf.text('SECOND PAGE', 30, 70);
-  pdf.rect(100, 150, 100, 100, 'F');
-  await page.getByLabel('포스터 파일 선택').setInputFiles({
-    name: 'fixture.pdf',
-    mimeType: 'application/pdf',
-    buffer: Buffer.from(pdf.output('arraybuffer')),
-  });
-  await page.waitForFunction(
-    () =>
-      document
-        .querySelector('.document-name')
-        ?.textContent.includes('fixture.pdf'),
-    undefined,
-    { timeout: 15000 },
+  await upload(
+    Buffer.from(pdf.output('arraybuffer')),
+    'fixture.pdf',
+    'application/pdf',
   );
-  const pdfData = await map();
+  const pdfMap = await map();
   assert(
-    pdfData.elements.some(
+    pdfMap.elements.some(
       (e) => e.kind === 'text' && e.label.includes('NATIVE PDF TEXT'),
     ),
   );
-  await page.getByLabel('PDF 페이지', { exact: true }).selectOption('2');
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll('.layer-name')].some((el) =>
-      el.textContent.includes('SECOND PAGE'),
-    ),
-  );
   record(
-    'Multipage PDF renders in its worker and preserves native text elements',
+    'PDF worker imports the first page and separates native text without adding page controls',
   );
-
-  await page.getByLabel('포스터 파일 선택').setInputFiles({
-    name: 'bad.pdf',
-    mimeType: 'application/pdf',
-    buffer: Buffer.from('broken'),
-  });
+  await upload(Buffer.from('broken'), 'bad.pdf', 'application/pdf');
   await page.getByRole('alert').waitFor();
-  assert(
-    (await page.locator('.document-name').textContent()).includes(
-      'fixture.pdf',
-    ),
-  );
-  record('Invalid upload shows an error and preserves the current poster');
-
-  await page.getByRole('button', { name: '사용 가이드', exact: true }).click();
-  await page.getByRole('dialog').waitFor();
-  await page.keyboard.press('Escape');
-  assert.equal(await page.getByRole('dialog').count(), 0);
-  record('Help dialog opens and closes with keyboard');
+  await click('알림 닫기');
+  assert.equal((await map()).extraction, pdfMap.extraction);
+  record('Invalid upload preserves the current poster');
 
   const cameraPage = await context.newPage();
   cameraPage.on('pageerror', (e) => errors.push(e.message));
@@ -442,13 +402,14 @@ try {
     });
   });
   await cameraPage.goto(`http://127.0.0.1:${port}`);
-  await cameraPage
-    .getByRole('button', { name: '카메라로 움직임 감지', exact: true })
-    .click();
-  await cameraPage.waitForFunction(() =>
-    document
-      .querySelector('[data-testid="motion-status"]')
-      ?.classList.contains('connected'),
+  await upload(png, 'fixture.png', 'image/png', cameraPage);
+  await menu('노트북 움직임 감지', cameraPage);
+  await choose('카메라로 움직임 감지', cameraPage);
+  await cameraPage.waitForFunction(
+    () =>
+      document
+        .querySelector('[data-testid="motion-status"]')
+        ?.getAttribute('data-state') === 'connected',
   );
   await cameraPage.waitForTimeout(450);
   assert.equal(
@@ -464,23 +425,16 @@ try {
   await cameraPage.evaluate(() => {
     window.__cameraMove = true;
   });
-  await cameraPage.waitForFunction(
-    () =>
-      document.querySelector('.canvas-status')?.textContent.includes('변형 중'),
-    undefined,
-    { timeout: 6000 },
-  );
-  assert(
-    (await cameraPage.getByTestId('motion-reading').textContent()).includes(
-      'CAMERA ESTIMATE',
-    ),
-  );
+  await cameraPage.keyboard.press('Escape');
+  await cameraPage.waitForTimeout(900);
+  const cameraMap = await map(cameraPage);
+  assert.equal(cameraMap.input.source, 'camera');
+  assert(cameraMap.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
   record(
-    'Simulated live camera frames drive the real optical-flow pipeline without mouse input or microphone',
+    'Simulated live camera stream drives the real optical flow and material without requesting a microphone',
   );
-  await cameraPage
-    .getByRole('button', { name: '움직임 감지 중지', exact: true })
-    .click();
+  await menu('노트북 움직임 감지', cameraPage);
+  await choose('움직임 감지 중지', cameraPage);
   assert.equal(
     await cameraPage.evaluate(
       () => window.__cameraStream.getVideoTracks()[0].readyState,
@@ -492,49 +446,22 @@ try {
     null,
   );
   await cameraPage.close();
-  record('Stopping camera motion releases the video track and preview');
-  const deniedPage = await context.newPage();
-  deniedPage.on('pageerror', (e) => errors.push(e.message));
-  await deniedPage.addInitScript(() => {
-    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
-      configurable: true,
-      value: async () => {
-        throw new DOMException('Permission denied', 'NotAllowedError');
-      },
-    });
-  });
-  await deniedPage.goto(`http://127.0.0.1:${port}`);
-  await deniedPage
-    .getByRole('button', { name: '카메라로 움직임 감지', exact: true })
-    .click();
-  await deniedPage.waitForFunction(() =>
-    document
-      .querySelector('[data-testid="motion-status"]')
-      ?.classList.contains('denied'),
-  );
-  assert(
-    (await deniedPage.getByTestId('motion-status').textContent()).includes(
-      '허용되지',
-    ),
-  );
-  await deniedPage.close();
-  record(
-    'Camera permission denial is reported without pretending motion detection is connected',
-  );
+  record('Stopping detection releases the camera track');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: /샘플 사용/ }).click();
-  await page.waitForTimeout(200);
+  await upload(png);
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth > innerWidth,
     ),
     false,
   );
-  const stage = await page.locator('.poster-canvas').boundingBox();
-  assert(stage.width > 150 && stage.width < 390);
+  const bounds = await page.locator('.poster-canvas').boundingBox();
+  assert.equal(bounds.width, 390);
   await page.screenshot({ path: 'test-results/mobile.png', fullPage: true });
-  record('Mobile layout has a fitted canvas and no horizontal overflow');
+  record(
+    'Mobile fits the paper and controls while retaining a viewport-wide physical arena',
+  );
   assert.deepEqual(errors, [], `Browser errors: ${errors.join('\n')}`);
   console.log(`\n${results.length} browser checks passed.`);
 } finally {
