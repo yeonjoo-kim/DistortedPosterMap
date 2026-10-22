@@ -534,3 +534,83 @@ button {
     width: 44px;
   }
 }
+
+.tracking-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #88ad6c33;
+}
+.tracking-stats > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #78866c;
+  font-size: 9px;
+}
+.tracking-stats output {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: #566749;
+}
+.tracking-stats small {
+  font-size: 9px;
+}
+.tracking-key {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+  font-size: 9px;
+  margin-top: 12px;
+  color: #637255;
+}
+.tracking-key span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tracking-key i {
+  width: 12px;
+  border-top: 2px solid #dc5730;
+}
+.tracking-key .key-offset {
+  border-top: 1px dashed #dc5730;
+}
+.tracking-key .key-warp {
+  border-color: #1e8980;
+}
+.tracking-units {
+  font-size: 8px;
+  line-height: 1.7;
+  color: #7c8b6b;
+  margin: 9px 0 0;
+}
+.coordinate output {
+  font-size: clamp(20px, 2.2vw, 30px);
+}
+@media (max-width: 900px) {
+  .has-poster .paper {
+    width: min(
+      calc((100svh - 420px) * var(--poster-ratio)),
+      calc(100vw - 70px)
+    );
+  }
+  .coordinate output {
+    font-size: 21px;
+  }
+  .tracking-key {
+    font-size: 8px;
+    gap: 5px;
+  }
+  .tracking-stats {
+    gap: 5px;
+  }
+  .tracking-stats output {
+    font-size: 14px;
+  }
+  .tracking-units {
+    font-size: 7px;
+  }
+}

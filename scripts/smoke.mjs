@@ -58,6 +58,16 @@ try {
   await page.addInitScript(() => {
     window.__audioContexts = [];
     window.__analysers = [];
+    window.__trackingText = [];
+    const nativeText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+      if (
+        /^(E\d|ΔX|L )/.test(String(text)) &&
+        window.__trackingText.length < 2000
+      )
+        window.__trackingText.push(String(text));
+      return nativeText.call(this, text, ...args);
+    };
     const NativeAudio = window.AudioContext;
     window.AudioContext = class extends NativeAudio {
       constructor(...args) {
@@ -182,6 +192,17 @@ try {
   await upload(png);
   const initial = await map();
   assert(initial.elements.length >= 4);
+  assert(initial.settings.showPaths && initial.settings.showLabels);
+  assert(initial.elements.every((e) => e.distance === 0));
+  assert(
+    await page.evaluate(() =>
+      window.__trackingText.some((line) => line.startsWith('ΔX')),
+    ),
+  );
+  assert.equal(await page.getByRole('dialog').count(), 0);
+  record(
+    'Paths and coordinate/offset/distance annotations are enabled on upload without a new popup',
+  );
   assert.deepEqual(initial.materialMix, { zigzag: 0.2, fracture: 0.8 });
   assert(
     initial.bounds.width > initial.width &&
@@ -239,6 +260,14 @@ try {
   assert(soft.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
   assert(soft.elements.every((e) => e.kind !== 'fragment'));
   assert(soft.elements.every((e) => e.warp < 5));
+  assert(soft.elements.some((e) => e.distance > Math.hypot(e.dx, e.dy)));
+  assert(
+    Number.parseFloat(
+      await page
+        .getByLabel('평균 누적 이동 거리', { exact: true })
+        .textContent(),
+    ) > 0,
+  );
   assert(
     soft.fixtures.some(
       (e, i) =>
@@ -268,6 +297,20 @@ try {
     await page.waitForTimeout(150);
   }
   assert(broken.elements.some((e) => e.kind === 'fragment'));
+  assert(broken.completedTrails.length > 0);
+  assert(
+    broken.completedTrails.every(
+      (trail) => trail.path.length > 1 && Number.isFinite(trail.end.x),
+    ),
+  );
+  assert(
+    broken.elements
+      .filter((e) => e.kind === 'fragment')
+      .every((e) => e.distance > 0),
+  );
+  record(
+    'Fragment creation preserves prior routes and inherits cumulative travel in the JSON map',
+  );
   assert(
     broken.elements
       .filter((e) => e.kind === 'fragment')
@@ -303,6 +346,19 @@ try {
     await page
       .getByRole('button', { name: '움직임 시각화', exact: true })
       .getAttribute('aria-pressed'),
+    'false',
+  );
+  await page.waitForTimeout(100);
+  await page.evaluate(() => {
+    window.__trackingText = [];
+  });
+  await page.waitForTimeout(120);
+  assert.equal(await page.evaluate(() => window.__trackingText.length), 0);
+  await click('움직임 시각화');
+  assert.equal(
+    await page
+      .getByRole('button', { name: '움직임 시각화', exact: true })
+      .getAttribute('aria-pressed'),
     'true',
   );
   const mapped = await map();
@@ -311,7 +367,7 @@ try {
   assert.equal(await page.locator('.coordinate output').count(), 4);
   await page.screenshot({ path: 'test-results/fractured.png', fullPage: true });
   record(
-    'One visualization control shows paths and coordinates without individual selection',
+    'One visualization control hides and restores the detailed numeric overlay without individual selection',
   );
 
   await menu('노트북 움직임 감지');

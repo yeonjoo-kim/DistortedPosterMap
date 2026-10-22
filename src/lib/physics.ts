@@ -23,6 +23,8 @@ interface Entity {
   anchor: Point;
   origin: Point;
   path: Point[];
+  distance: number;
+  previousPosition: Point;
   warp: number;
   sharpness: number;
   compression: number;
@@ -56,6 +58,9 @@ export class PosterPhysics {
   entities: Entity[] = [];
   settings: Settings;
   selected: string | null = null;
+  annotationLimit = 12;
+  annotationScale = 1;
+  completedTrails: { id: string; path: Point[]; end: Point }[] = [];
   energy = 0;
   impactEnergy = 0;
   active = false;
@@ -95,6 +100,8 @@ export class PosterPhysics {
         anchor: { x: element.width / 2, y: element.height / 2 },
         origin: { x: element.x, y: element.y },
         path: [{ x: element.x, y: element.y }],
+        distance: 0,
+        previousPosition: { x: element.x, y: element.y },
         warp: 0,
         sharpness: 0,
         compression: 0,
@@ -296,6 +303,16 @@ export class PosterPhysics {
     if (!this.active) return;
     this.engine.gravity.y = materialResponse(this.energy).gravity;
     Matter.Engine.update(this.engine, Math.max(0.1, dt * 1000));
+    // Count every physics step, independently of the sampled drawing trail.
+    for (const entity of this.entities) {
+      const position = entity.body.position;
+      const step = Math.hypot(
+        position.x - entity.previousPosition.x,
+        position.y - entity.previousPosition.y,
+      );
+      if (Number.isFinite(step)) entity.distance += step;
+      entity.previousPosition = { ...position };
+    }
     this.frame++;
     if (this.entities.length < 220)
       for (const entity of [...this.toBreak].slice(0, 6)) {
@@ -366,7 +383,12 @@ export class PosterPhysics {
         ) > 1.5
       ) {
         entity.path.push({ ...entity.body.position });
-        if (entity.path.length > 120) entity.path.splice(1, 1);
+        // Thin old samples, preserving the start and the detailed recent trail.
+        if (entity.path.length > 360)
+          entity.path = [
+            ...entity.path.slice(0, -180).filter((_, index) => index % 2 === 0),
+            ...entity.path.slice(-180),
+          ];
       }
     }
   }
@@ -491,7 +513,9 @@ export class PosterPhysics {
         body: fragmentBody,
         anchor: { x: centroid.x - minX, y: centroid.y - minY },
         origin,
-        path: [origin, world],
+        path: [{ ...world }],
+        distance: entity.distance,
+        previousPosition: { ...world },
         warp: 0,
         sharpness: entity.sharpness,
         compression: 0,
@@ -522,6 +546,14 @@ export class PosterPhysics {
         },
       });
     }
+    this.completedTrails.push({
+      id: el.id,
+      path: [
+        ...entity.path.map((point) => ({ ...point })),
+        { ...body.position },
+      ],
+      end: { ...body.position },
+    });
     Matter.Composite.remove(this.engine.world, body);
     this.entities = this.entities.filter((e) => e !== entity);
     this.entities.push(...fragments);
@@ -545,8 +577,7 @@ export class PosterPhysics {
       ctx.drawImage(this.asset.source, 0, 0);
       return;
     }
-    if (!this.active && !this.selected && !this.settings.showLabels)
-      ctx.drawImage(this.asset.source, 0, 0);
+    if (!this.active && !this.selected) ctx.drawImage(this.asset.source, 0, 0);
     else {
       ctx.drawImage(this.asset.background, 0, 0);
       for (const entity of this.entities) {
@@ -576,82 +607,183 @@ export class PosterPhysics {
       }
     }
     if (!overlays) return;
-    const scale = Math.max(1, width / 600);
-    for (const entity of this.entities) {
-      const selected = entity.element.id === this.selected;
-      if (this.settings.showPaths && entity.path.length > 1) {
-        ctx.save();
-        ctx.strokeStyle = selected ? '#f4512c' : 'rgba(244,81,44,.34)';
-        ctx.lineWidth = (selected ? 1.6 : 0.8) * scale;
-        ctx.setLineDash(selected ? [] : [3 * scale, 3 * scale]);
+    this.drawTracking(ctx);
+  }
+
+  private drawTracking(ctx: CanvasRenderingContext2D) {
+    const scale = this.annotationScale;
+    const trace = (path: Point[], end: Point, archived = false) => {
+      if (!path.length) return;
+      ctx.beginPath();
+      path.forEach((point, i) =>
+        i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y),
+      );
+      ctx.lineTo(end.x, end.y);
+      ctx.strokeStyle = archived ? 'rgba(220,87,48,.35)' : 'rgba(220,87,48,.7)';
+      ctx.lineWidth = (archived ? 0.8 : 1.1) * scale;
+      ctx.setLineDash([]);
+      ctx.stroke();
+      if (archived) {
         ctx.beginPath();
-        entity.path.forEach((p, i) =>
-          i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y),
-        );
+        ctx.moveTo(end.x - 3 * scale, end.y - 3 * scale);
+        ctx.lineTo(end.x + 3 * scale, end.y + 3 * scale);
+        ctx.moveTo(end.x + 3 * scale, end.y - 3 * scale);
+        ctx.lineTo(end.x - 3 * scale, end.y + 3 * scale);
         ctx.stroke();
-        ctx.fillStyle = '#f4512c';
+      }
+    };
+    if (this.settings.showPaths) {
+      ctx.save();
+      for (const trail of this.completedTrails)
+        trace(trail.path, trail.end, true);
+      for (const entity of this.entities) {
+        const { origin, body, path } = entity;
+        // The dotted displacement is distinct from the actual travelled route.
+        ctx.strokeStyle = 'rgba(220,87,48,.28)';
+        ctx.lineWidth = 0.65 * scale;
+        ctx.setLineDash([3 * scale, 4 * scale]);
         ctx.beginPath();
-        ctx.arc(entity.origin.x, entity.origin.y, 2 * scale, 0, Math.PI * 2);
+        ctx.moveTo(origin.x, origin.y);
+        ctx.lineTo(body.position.x, body.position.y);
+        ctx.stroke();
+        trace(path, body.position);
+        ctx.fillStyle = '#fff9e9';
+        ctx.strokeStyle = '#dc5730';
+        ctx.lineWidth = scale;
+        ctx.beginPath();
+        ctx.arc(origin.x, origin.y, 2.5 * scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        const previous = path.length > 1 ? path[path.length - 2] : path[0];
+        const angle = Math.atan2(
+          body.position.y - previous.y,
+          body.position.x - previous.x,
+        );
+        ctx.save();
+        ctx.translate(body.position.x, body.position.y);
+        ctx.rotate(angle);
+        ctx.fillStyle = '#dc5730';
+        ctx.beginPath();
+        ctx.moveTo(4 * scale, 0);
+        ctx.lineTo(-3 * scale, -2.6 * scale);
+        ctx.lineTo(-3 * scale, 2.6 * scale);
+        ctx.closePath();
         ctx.fill();
         ctx.restore();
-      }
-      if (selected) {
-        ctx.save();
-        ctx.strokeStyle = '#f4512c';
-        ctx.lineWidth = 1.4 * scale;
-        ctx.setLineDash([5 * scale, 3 * scale]);
-        ctx.beginPath();
-        entity.body.vertices.forEach((v, i) =>
-          i ? ctx.lineTo(v.x, v.y) : ctx.moveTo(v.x, v.y),
-        );
-        ctx.closePath();
-        ctx.stroke();
-        if (entity.warp) {
+        if (entity.warp > 0.2 || entity.compression > 0.02) {
           const points = this.deformationPoints(entity.element.id);
-          ctx.setLineDash([]);
-          ctx.lineWidth = 0.8 * scale;
+          ctx.strokeStyle = 'rgba(30,137,128,.8)';
+          ctx.lineWidth = 1.2 * scale;
           ctx.beginPath();
-          points.forEach((p, i) =>
+          points.forEach((point, i) =>
             i
-              ? ctx.lineTo(p.after.x, p.after.y)
-              : ctx.moveTo(p.after.x, p.after.y),
+              ? ctx.lineTo(point.after.x, point.after.y)
+              : ctx.moveTo(point.after.x, point.after.y),
           );
           ctx.stroke();
-          for (const p of points) {
-            ctx.fillStyle = '#f4512c';
-            ctx.fillRect(
-              p.after.x - 2 * scale,
-              p.after.y - 2 * scale,
-              4 * scale,
-              4 * scale,
-            );
-          }
         }
-        ctx.restore();
       }
-      if (this.settings.showLabels || selected) {
-        ctx.save();
-        ctx.font = `${9 * scale}px monospace`;
-        ctx.textBaseline = 'top';
-        const label = `${entity.element.id.toUpperCase()}  ${entity.body.position.x.toFixed(0)}, ${entity.body.position.y.toFixed(0)}`;
-        const labelWidth = ctx.measureText(label).width + 10 * scale;
-        const x = clamp(
-            entity.body.position.x - labelWidth / 2,
-            this.bounds.x + 2,
-            this.bounds.x + this.bounds.width - labelWidth - 2,
-          ),
-          y = clamp(
-            entity.body.position.y - 12 * scale,
-            this.bounds.y + 2,
-            this.bounds.y + this.bounds.height - 16 * scale,
-          );
-        ctx.fillStyle = selected ? '#f4512c' : '#252621';
-        ctx.fillRect(x, y, labelWidth, 15 * scale);
-        ctx.fillStyle = '#fff';
-        ctx.fillText(label, x + 5 * scale, y + 3 * scale);
-        ctx.restore();
-      }
+      ctx.restore();
     }
+    if (!this.settings.showLabels) return;
+    const used: { x: number; y: number; width: number; height: number }[] =
+      this.fixtures.map(({ body }) => ({
+        x: body.bounds.min.x,
+        y: body.bounds.min.y,
+        width: body.bounds.max.x - body.bounds.min.x,
+        height: body.bounds.max.y - body.bounds.min.y,
+      }));
+    const signed = (value: number) => {
+      const n = Math.abs(value) < 0.05 ? 0 : value;
+      return `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
+    };
+    const candidates = [...this.entities]
+      .sort((a, b) => b.distance - a.distance)
+      .slice(0, this.annotationLimit);
+    ctx.save();
+    ctx.font = `${10 * scale}px monospace`;
+    ctx.textBaseline = 'top';
+    for (const entity of candidates) {
+      const { body, origin } = entity;
+      const lines = [
+        `${entity.element.id.toUpperCase()}  X ${body.position.x.toFixed(1)}  Y ${body.position.y.toFixed(1)}`,
+        `ΔX ${signed(body.position.x - origin.x)}  ΔY ${signed(body.position.y - origin.y)}`,
+        `L ${entity.distance.toFixed(1)}  θ ${signed((body.angle * 180) / Math.PI)}°  W ${entity.warp.toFixed(1)}`,
+      ];
+      const width = Math.min(
+        this.bounds.width - 8 * scale,
+        Math.max(...lines.map((line) => ctx.measureText(line).width)) +
+          12 * scale,
+      );
+      const height = 42 * scale;
+      const locations = [
+        [8, -47],
+        [8, 10],
+        [-width / scale - 8, -47],
+        [-width / scale - 8, 10],
+        [-width / scale / 2, -85],
+        [-width / scale / 2, 45],
+        [-width / scale / 2, -132],
+        [-width / scale / 2, -179],
+        [-width / scale / 2, -226],
+      ];
+      const boxes = locations.map(([dx, dy]) => ({
+        x: clamp(
+          body.position.x + dx * scale,
+          this.bounds.x + 4 * scale,
+          this.bounds.x + this.bounds.width - width - 4 * scale,
+        ),
+        y: clamp(
+          body.position.y + dy * scale,
+          this.bounds.y + 4 * scale,
+          this.bounds.y + this.bounds.height - height - 4 * scale,
+        ),
+        width,
+        height,
+      }));
+      const overlap = (box: (typeof boxes)[number]) =>
+        used.reduce(
+          (sum, other) =>
+            sum +
+            Math.max(
+              0,
+              Math.min(box.x + box.width, other.x + other.width) -
+                Math.max(box.x, other.x),
+            ) *
+              Math.max(
+                0,
+                Math.min(box.y + box.height, other.y + other.height) -
+                  Math.max(box.y, other.y),
+              ),
+          0,
+        );
+      const box = boxes.sort((a, b) => overlap(a) - overlap(b))[0];
+      if (used.length && overlap(box) > width * height * 0.05) continue;
+      used.push(box);
+      ctx.strokeStyle = 'rgba(181,91,52,.5)';
+      ctx.lineWidth = 0.7 * scale;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(body.position.x, body.position.y);
+      ctx.lineTo(
+        clamp(body.position.x, box.x, box.x + width),
+        clamp(body.position.y, box.y, box.y + height),
+      );
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(250,255,220,.95)';
+      ctx.fillRect(box.x, box.y, width, height);
+      ctx.strokeRect(box.x, box.y, width, height);
+      ctx.fillStyle = '#30392b';
+      lines.forEach((line, i) =>
+        ctx.fillText(
+          line,
+          box.x + 6 * scale,
+          box.y + (5 + i * 12) * scale,
+          width - 10 * scale,
+        ),
+      );
+    }
+    ctx.restore();
   }
 
   snapshot(overlays: boolean, multiplier = 2) {
@@ -692,6 +824,7 @@ export class PosterPhysics {
           scaleX,
           scaleY,
           areaWeight,
+          distance,
         }): ElementTelemetry => ({
           id: element.id,
           label: element.label,
@@ -709,6 +842,7 @@ export class PosterPhysics {
           scaleX,
           scaleY,
           areaWeight,
+          distance,
           path: path.map((p) => ({ ...p })),
         }),
       ),
@@ -786,7 +920,18 @@ export class PosterPhysics {
         breakable: false,
       })),
       input: this.lastInput,
+      completedTrails: this.completedTrails.map((trail) => ({
+        id: trail.id,
+        path: trail.path.map((point) => ({ ...point })),
+        end: { ...trail.end },
+      })),
       units: 'poster pixels',
+      trackingUnits: {
+        coordinates: 'poster pixels; origin at original poster top-left',
+        distance: 'poster pixels; center travel accumulated every physics step',
+        rotation: 'degrees',
+        warp: 'poster pixels; horizontal bend amplitude',
+      },
       width: this.asset.width,
       height: this.asset.height,
       extraction: this.asset.method,

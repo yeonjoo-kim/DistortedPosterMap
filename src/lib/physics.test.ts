@@ -124,4 +124,48 @@ describe('physical workflow', () => {
     expect(physics.entities).toHaveLength(0);
     physics.dispose();
   });
+  it('records cumulative center travel separately from net displacement', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    expect(physics.telemetry().elements[0].distance).toBe(0);
+    physics.shake(0.2, { x: 0, y: 0 });
+    const body = physics.entities[0].body;
+    Matter.Body.setVelocity(body, { x: 10, y: 0 });
+    for (let i = 0; i < 18; i++) physics.update(1000 / 60);
+    const outward = physics.telemetry().elements[0];
+    Matter.Body.setVelocity(body, { x: -10, y: 0 });
+    for (let i = 0; i < 18; i++) physics.update(1000 / 60);
+    const back = physics.telemetry().elements[0];
+    expect(back.distance).toBeGreaterThan(outward.distance);
+    expect(back.distance).toBeGreaterThan(Math.hypot(back.dx, back.dy) * 1.5);
+    expect(physics.mapData().trackingUnits.rotation).toBe('degrees');
+    physics.dispose();
+  });
+
+  it('retains the original start and recent route during long performances', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    physics.shake(0.1);
+    physics.engine.gravity.scale = 0;
+    const body = physics.entities[0].body;
+    for (let i = 0; i < 2200; i++) {
+      Matter.Body.setVelocity(body, { x: 0, y: 0 });
+      Matter.Body.setPosition(body, {
+        x: 200 + Math.cos(i * 0.04) * 80,
+        y: 250 + Math.sin(i * 0.04) * 80,
+      });
+      physics.update(1000 / 60);
+    }
+    const data = physics.telemetry().elements[0];
+    expect(data.path[0]).toEqual({ x: 200, y: 100 });
+    expect(
+      Math.hypot(data.path.at(-1)!.x - data.x, data.path.at(-1)!.y - data.y),
+    ).toBeLessThan(15);
+    expect(data.path.length).toBeLessThan(500);
+    expect(data.distance).toBeGreaterThan(5000);
+    expect(
+      data.path.every(
+        (point) => Number.isFinite(point.x) && Number.isFinite(point.y),
+      ),
+    ).toBe(true);
+    physics.dispose();
+  });
 });

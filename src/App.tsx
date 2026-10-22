@@ -56,6 +56,8 @@ export default function App() {
       projection = { left: paper.left, top: paper.top, scale, ratio };
       canvas.width = innerWidth * ratio;
       canvas.height = innerHeight * ratio;
+      engine.annotationScale = 1 / scale;
+      engine.annotationLimit = innerWidth < 700 ? 6 : 12;
       engine.setBounds({
         x: -paper.left / scale,
         y: -paper.top / scale,
@@ -238,6 +240,10 @@ export default function App() {
         0,
       ) / area,
   );
+  const meanDistance =
+    telemetry.elements.reduce((sum, e) => sum + e.distance * e.areaWeight, 0) /
+    area;
+  const maxWarp = Math.max(0, ...telemetry.elements.map((e) => e.warp));
   const connected = input.status.state === 'connected';
   const sourceLabel = input.source === 'camera' ? '카메라 추정' : '가속도 센서';
   const toggleMenu = (
@@ -373,7 +379,7 @@ export default function App() {
               className="mapping-toggle"
               aria-label="움직임 시각화"
               aria-pressed={settings.showPaths}
-              title="포스터 전체의 면적 가중 중심 좌표(px). 클릭하여 이동 경로와 좌표를 표시합니다."
+              title="전체 중심 좌표와 이동량(px). 클릭하면 포스터 위 경로와 상세 수치를 켜거나 끕니다."
               onClick={() =>
                 setSettings((s) => ({
                   ...s,
@@ -383,19 +389,58 @@ export default function App() {
               }
             >
               <span className="mapping-caption">
-                움직임 시각화 <span>{settings.showPaths ? 'ON' : 'OFF'}</span>
+                경로 · 수치 표시{' '}
+                <span>{settings.showPaths ? 'ON' : 'OFF'}</span>
               </span>
               <span className="coordinate-grid">
                 {['Position X', 'Position Y', 'Offset X', 'Offset Y'].map(
                   (label, i) => (
                     <span className="coordinate" key={label}>
                       <span>{label}</span>
-                      <output>{values[i].toFixed(0).padStart(3, '0')}</output>
+                      <output>
+                        {i > 1 && values[i] >= 0.05 ? '+' : ''}
+                        {(Math.abs(values[i]) < 0.05 ? 0 : values[i]).toFixed(
+                          1,
+                        )}
+                      </output>
                     </span>
                   ),
                 )}
               </span>
             </button>
+            <div className="tracking-stats">
+              <span>
+                평균 누적 거리
+                <output aria-label="평균 누적 이동 거리">
+                  {meanDistance.toFixed(1)} <small>px</small>
+                </output>
+              </span>
+              <span>
+                최대 휨 W
+                <output aria-label="최대 변형량">
+                  {maxWarp.toFixed(1)} <small>px</small>
+                </output>
+              </span>
+            </div>
+            <div className="tracking-key" aria-label="경로 안내">
+              <span>
+                <i className="key-trail" />
+                이동 경로
+              </span>
+              <span>
+                <i className="key-offset" />
+                원래 위치→현재
+              </span>
+              <span>
+                <i className="key-warp" />
+                변형 중심선
+              </span>
+              <span>× 조각 분리 지점</span>
+            </div>
+            <p className="tracking-units">
+              원본 좌상단 (0,0) · 단위 px · θ 회전(°)
+              <br />L 누적 거리 · W 휨 · 수치는 주요 요소에 표시
+            </p>
             <div className="control-row">
               <button
                 className="download-button"
