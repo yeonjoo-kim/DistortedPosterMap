@@ -70,7 +70,6 @@ export class PosterPhysics {
     height: number;
   }[] = [];
   private walls: Matter.Body[] = [];
-  private pinnedFixtures = new Set<string>();
   private toBreak = new Set<Entity>();
   private frame = 0;
   private peak = 0;
@@ -87,7 +86,7 @@ export class PosterPhysics {
         element.y,
         Math.max(3, element.width - 2),
         Math.max(3, element.height - 2),
-        { friction: 0.16, frictionAir: 0.007, restitution: 0.3 },
+        { friction: 0.65, frictionAir: 0.035, restitution: 0.05 },
       );
       Matter.Body.setStatic(body, true);
       this.entities.push({
@@ -124,7 +123,7 @@ export class PosterPhysics {
         const impact = clamp(speed / 13, 0, 1);
         if (impact < 0.035) continue;
         this.impactEnergy = Math.max(this.impactEnergy, impact);
-        this.onImpact?.(impact * this.energy);
+        this.onImpact?.(impact * (0.35 + this.energy * 0.65));
         for (const body of [pair.bodyA, pair.bodyB]) {
           const entity = this.entities.find((e) => e.body === body);
           if (!entity || body.isStatic) continue;
@@ -195,9 +194,9 @@ export class PosterPhysics {
     );
     this.fixtures = items.map(({ id, x, y, width, height }) => {
       const body = Matter.Bodies.rectangle(x, y, width, height, {
-        friction: 0.12,
-        frictionAir: 0.012,
-        restitution: 0.48,
+        friction: 0.5,
+        frictionAir: 0.07,
+        restitution: 0.08,
       });
       Matter.Body.setStatic(body, true);
       return { id, body, origin: { x, y }, width, height };
@@ -206,16 +205,6 @@ export class PosterPhysics {
       this.engine.world,
       this.fixtures.map(({ body }) => body),
     );
-  }
-
-  pinFixture(id: string, pinned: boolean) {
-    if (pinned) this.pinnedFixtures.add(id);
-    else this.pinnedFixtures.delete(id);
-    const fixture = this.fixtures.find((item) => item.id === id);
-    if (fixture) {
-      Matter.Body.setStatic(fixture.body, pinned || !this.active);
-      if (!pinned && this.active) Matter.Sleeping.set(fixture.body, false);
-    }
   }
 
   applyMotion(sample: MotionSample) {
@@ -234,44 +223,24 @@ export class PosterPhysics {
       this.peakAge = 0;
     }
     const profile = materialResponse(strength);
-    // Give the interface room to traverse the whole screen even with vertical input.
-    for (const [index, { id, body }] of this.fixtures.entries()) {
-      if (this.pinnedFixtures.has(id)) continue;
+    for (const { body } of this.fixtures) {
       Matter.Body.setStatic(body, false);
       Matter.Sleeping.set(body, false);
-      const inward = clamp(
-        (this.bounds.x + this.bounds.width / 2 - body.position.x) /
-          (this.bounds.width * 0.35),
-        -1,
-        1,
-      );
-      const onFloor =
-        body.bounds.max.y > this.bounds.y + this.bounds.height - 12;
       Matter.Body.setVelocity(body, {
-        x: clamp(
-          body.velocity.x +
-            (direction.x * 40 + inward * 24 + Math.sin(index * 2.4) * 8) *
-              strength,
-          -48,
-          48,
-        ),
-        y: clamp(
-          body.velocity.y + (onFloor ? -44 : direction.y * 32 - 5) * strength,
-          -44,
-          44,
-        ),
+        x: clamp(body.velocity.x + direction.x * strength * 11, -24, 24),
+        y: clamp(body.velocity.y + direction.y * strength * 9, -24, 24),
       });
       Matter.Body.setAngularVelocity(
         body,
         clamp(
-          body.angularVelocity + direction.x * strength * 0.012,
-          -0.045,
-          0.045,
+          body.angularVelocity + direction.x * strength * 0.008,
+          -0.035,
+          0.035,
         ),
       );
     }
     for (const entity of this.entities) {
-      entity.strain += strength * 0.85;
+      entity.strain += strength * 0.52;
       if (
         entity.body.isStatic &&
         strength < 0.72 &&
@@ -282,22 +251,16 @@ export class PosterPhysics {
       Matter.Sleeping.set(entity.body, false);
       entity.body.restitution = profile.restitution;
       const jitter = Math.random() - 0.5;
-      const onFloor =
-        entity.body.bounds.max.y > this.bounds.y + this.bounds.height - 12;
       Matter.Body.setVelocity(entity.body, {
         x: clamp(
-          entity.body.velocity.x + (direction.x * 38 + jitter * 16) * strength,
-          -60,
-          60,
+          entity.body.velocity.x + (direction.x * 15 + jitter * 5) * strength,
+          -30,
+          30,
         ),
         y: clamp(
-          entity.body.velocity.y +
-            (onFloor
-              ? -48 - Math.abs(direction.y) * 12
-              : direction.y * 34 + jitter * 12) *
-              strength,
-          -60,
-          60,
+          entity.body.velocity.y + (direction.y * 12 + jitter * 4) * strength,
+          -30,
+          30,
         ),
       });
       Matter.Body.setAngularVelocity(
@@ -498,15 +461,15 @@ export class PosterPhysics {
         world.y,
         [points],
         {
-          friction: 0.14,
-          frictionAir: 0.006,
+          friction: 0.35,
+          frictionAir: 0.025,
           restitution: materialResponse(this.energy).restitution,
         },
       );
       Matter.Body.setAngle(fragmentBody, body.angle);
       Matter.Body.setVelocity(fragmentBody, {
-        x: body.velocity.x + (Math.random() - 0.5) * 12,
-        y: body.velocity.y - Math.random() * 8,
+        x: body.velocity.x + (Math.random() - 0.5) * 3,
+        y: body.velocity.y - Math.random() * 2,
       });
       Matter.Body.setAngularVelocity(
         fragmentBody,
@@ -668,7 +631,7 @@ export class PosterPhysics {
       }
       if (this.settings.showLabels || selected) {
         ctx.save();
-        ctx.font = `${10 * scale}px ${this.active ? 'MetaAccanthisAlternate' : 'MetaAccanthis'}, monospace`;
+        ctx.font = `${9 * scale}px monospace`;
         ctx.textBaseline = 'top';
         const label = `${entity.element.id.toUpperCase()}  ${entity.body.position.x.toFixed(0)}, ${entity.body.position.y.toFixed(0)}`;
         const labelWidth = ctx.measureText(label).width + 10 * scale;
@@ -695,7 +658,7 @@ export class PosterPhysics {
     const { x, y, width, height } = this.bounds;
     const output = canvas(width * multiplier, height * multiplier),
       ctx = output.getContext('2d')!;
-    ctx.fillStyle = this.asset.color;
+    ctx.fillStyle = '#f6ffbd';
     ctx.fillRect(0, 0, output.width, output.height);
     ctx.scale(multiplier, multiplier);
     ctx.translate(-x, -y);

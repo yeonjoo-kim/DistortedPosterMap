@@ -58,23 +58,11 @@ try {
   await page.addInitScript(() => {
     window.__audioContexts = [];
     window.__analysers = [];
-    window.__guitarAmps = [];
-    window.__guitarNotes = [];
     const NativeAudio = window.AudioContext;
     window.AudioContext = class extends NativeAudio {
       constructor(...args) {
         super(...args);
         window.__audioContexts.push(this);
-      }
-      createWaveShaper() {
-        const node = super.createWaveShaper();
-        window.__guitarAmps.push(node);
-        return node;
-      }
-      createBufferSource() {
-        const node = super.createBufferSource();
-        window.__guitarNotes.push(node);
-        return node;
       }
       createAnalyser() {
         const node = super.createAnalyser();
@@ -96,17 +84,13 @@ try {
   );
   const blankPaper = await page.locator('.paper').boundingBox();
   assert(Math.abs(blankPaper.width - 534) < 4);
-  assert.equal(await page.locator('.tape').count(), 0);
   await page.screenshot({ path: 'test-results/home.png', fullPage: true });
   record(
-    'Plain paper and upload control replace the old workbench and element list',
+    'Figma paper, tapes and upload control replace the old workbench and element list',
   );
 
-  const click = async (name, target = page) => {
-    const button = target.getByRole('button', { name, exact: true });
-    await button.hover({ force: true });
-    await button.click({ force: true });
-  };
+  const click = (name, target = page) =>
+    target.getByRole('button', { name, exact: true }).click({ force: true });
   async function choose(name, target = page) {
     const button = target.getByRole('menuitem', { name, exact: true });
     await button.click({ force: true });
@@ -135,11 +119,6 @@ try {
         document.querySelector('.paper')?.getAttribute('aria-busy') === 'false',
     );
     await target.getByLabel('왜곡되는 포스터', { exact: true }).waitFor();
-    assert.equal(await target.getByRole('dialog').count(), 0);
-    assert.equal(
-      await target.locator('.camera-dialog, .body-overlay').count(),
-      0,
-    );
   }
   async function sensor(x, y = 0, z = 0) {
     await page.evaluate(
@@ -182,7 +161,7 @@ try {
     canvas.width = 400;
     canvas.height = 600;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#eee3cd';
+    ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, 400, 600);
     ctx.fillStyle = '#202020';
     ctx.fillRect(30, 30, 120, 70);
@@ -203,29 +182,6 @@ try {
   await upload(png);
   const initial = await map();
   assert(initial.elements.length >= 4);
-  record(
-    'Upload stays on the poster without a camera popup or body tracking UI',
-  );
-  await page.evaluate(() =>
-    Promise.all([
-      document.fonts.load('20px MetaAccanthis'),
-      document.fonts.load('20px MetaAccanthisAlternate'),
-    ]),
-  );
-  const face = () =>
-    page
-      .locator('.wordmark')
-      .evaluate((el) =>
-        getComputedStyle(el).fontFamily.split(',')[0].replaceAll('"', ''),
-      );
-  assert.equal(await face(), 'MetaAccanthis');
-  assert.equal(
-    await page
-      .locator('.studio')
-      .evaluate((el) => getComputedStyle(el).backgroundColor),
-    'rgb(238, 227, 205)',
-  );
-  assert.equal(await page.locator('.tape').count(), 0);
   assert.deepEqual(initial.materialMix, { zigzag: 0.2, fracture: 0.8 });
   assert(
     initial.bounds.width > initial.width &&
@@ -238,7 +194,7 @@ try {
     'Uploaded elements and three unbreakable interface bodies share the full-screen arena',
   );
 
-  await menu('움직임 감지');
+  await menu('노트북 움직임 감지');
   await choose('가속도 센서 확인');
   await page.waitForFunction(
     () =>
@@ -282,22 +238,13 @@ try {
   const soft = await map();
   assert(soft.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
   assert(soft.elements.every((e) => e.kind !== 'fragment'));
-  assert(
-    soft.elements.every((e) => {
-      const xs = e.sourceVertices.map((v) => v.x);
-      return e.warp <= (Math.max(...xs) - Math.min(...xs)) * 0.055;
-    }),
-  );
+  assert(soft.elements.every((e) => e.warp < 5));
   assert(
     soft.fixtures.some(
       (e, i) =>
         Math.hypot(e.x - initial.fixtures[i].x, e.y - initial.fixtures[i].y) >
         5,
     ),
-  );
-  assert.equal(await face(), 'MetaAccanthisAlternate');
-  record(
-    'Typography switches from MetaAccanthis to MetaAccanthisAlternate at the first physical distortion',
   );
   record(
     'Gentle movement produces restrained warping and moves the unbreakable logo, About and adjust box',
@@ -308,28 +255,11 @@ try {
   assert(muted.rms < Math.max(softSpectrum.rms * 0.02, 1e-5));
   await click('연주 소리');
   record('Sound toggle mutes the actual Web Audio output');
-  assert.equal(
-    await page.evaluate(() => window.__guitarAmps[0].oversample),
-    '4x',
-  );
-  assert(
-    await page.evaluate(
-      () =>
-        window.__guitarNotes.length >= 3 &&
-        window.__guitarNotes.length % 3 === 0,
-    ),
-  );
-  record(
-    'Plucked root/fifth/octave guitar strings pass through an oversampled distortion amp',
-  );
 
   for (let i = 0; i < 12; i++) await sensor(i % 2 ? 11 : -11, 3);
   const hardSpectrum = await spectrum();
   assert(hardSpectrum.power > softSpectrum.power);
-  assert(
-    hardSpectrum.centroid > softSpectrum.centroid * 1.3,
-    JSON.stringify({ softSpectrum, hardSpectrum }),
-  );
+  assert(hardSpectrum.centroid > softSpectrum.centroid * 1.3);
   let broken;
   for (let i = 0; i < 10; i++) {
     broken = await map();
@@ -384,7 +314,7 @@ try {
     'One visualization control shows paths and coordinates without individual selection',
   );
 
-  await menu('움직임 감지');
+  await menu('노트북 움직임 감지');
   await choose('움직임 감지 중지');
   await page.keyboard.press('Escape');
   for (const format of ['PNG', 'JPG', 'PDF']) {
@@ -434,10 +364,6 @@ try {
 
   const cameraPage = await context.newPage();
   cameraPage.on('pageerror', (e) => errors.push(e.message));
-  const modelRequests = [];
-  cameraPage.on('request', (request) => {
-    if (request.url().includes('/pose/')) modelRequests.push(request.url());
-  });
   await cameraPage.addInitScript(() => {
     Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
       configurable: true,
@@ -477,19 +403,13 @@ try {
   });
   await cameraPage.goto(`http://127.0.0.1:${port}`);
   await upload(png, 'fixture.png', 'image/png', cameraPage);
-  assert.equal(
-    await cameraPage.evaluate(() => !!window.__cameraConstraints),
-    false,
-  );
-  await menu('움직임 감지', cameraPage);
+  await menu('노트북 움직임 감지', cameraPage);
   await choose('카메라로 움직임 감지', cameraPage);
   await cameraPage.waitForFunction(
     () =>
       document
         .querySelector('[data-testid="motion-status"]')
         ?.getAttribute('data-state') === 'connected',
-    undefined,
-    { timeout: 90000 },
   );
   await cameraPage.waitForTimeout(450);
   assert.equal(
@@ -506,22 +426,14 @@ try {
     window.__cameraMove = true;
   });
   await cameraPage.keyboard.press('Escape');
-  let cameraMap;
-  for (let i = 0; i < 15; i++) {
-    await cameraPage.waitForTimeout(300);
-    cameraMap = await map(cameraPage);
-    if (cameraMap.input?.source === 'camera' && cameraMap.input.strength > 0.1)
-      break;
-  }
+  await cameraPage.waitForTimeout(900);
+  const cameraMap = await map(cameraPage);
   assert.equal(cameraMap.input.source, 'camera');
-  assert(!('tracking' in cameraMap.input));
-  assert.equal(await cameraPage.locator('.body-overlay').count(), 0);
-  assert(cameraMap.input.strength > 0.1, JSON.stringify(cameraMap.input));
   assert(cameraMap.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
   record(
-    'The restored optical-flow camera drives material and sound without body recognition or a microphone',
+    'Simulated live camera stream drives the real optical flow and material without requesting a microphone',
   );
-  await menu('움직임 감지', cameraPage);
+  await menu('노트북 움직임 감지', cameraPage);
   await choose('움직임 감지 중지', cameraPage);
   assert.equal(
     await cameraPage.evaluate(
@@ -533,39 +445,11 @@ try {
     await cameraPage.locator('video').evaluate((v) => v.srcObject),
     null,
   );
-  assert.deepEqual(modelRequests, []);
   await cameraPage.close();
   record('Stopping detection releases the camera track');
-  const denied = await context.newPage();
-  await denied.addInitScript(() => {
-    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
-      value: async () => {
-        throw new DOMException('denied', 'NotAllowedError');
-      },
-    });
-  });
-  await denied.goto(`http://127.0.0.1:${port}`);
-  await upload(png, 'fixture.png', 'image/png', denied);
-  await menu('움직임 감지', denied);
-  await choose('카메라로 움직임 감지', denied);
-  await denied.waitForFunction(() =>
-    document
-      .querySelector('.connection-detail')
-      ?.textContent.includes('허용되지'),
-  );
-  assert.equal(await denied.getByRole('dialog').count(), 0);
-  assert.equal(
-    await denied.getByTestId('motion-status').getAttribute('data-state'),
-    'denied',
-  );
-  await denied.close();
-  record(
-    'Camera permission denial is reported in the existing motion menu without a popup',
-  );
 
   await page.setViewportSize({ width: 390, height: 844 });
   await upload(png);
-  assert.equal(await face(), 'MetaAccanthis');
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth > innerWidth,

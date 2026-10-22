@@ -59,8 +59,6 @@ describe('physical workflow', () => {
   });
   it('combines gravity, warping and recoverable collision compression without selecting a mode', () => {
     const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
-    const impacts: number[] = [];
-    physics.onImpact = (value) => impacts.push(value);
     physics.shake(0.4, { x: 0.2, y: 1 });
     const body = physics.entities[0].body;
     Matter.Body.setPosition(body, { x: 200, y: 582 });
@@ -68,8 +66,6 @@ describe('physical workflow', () => {
     physics.update(1000 / 60);
     const hit = physics.telemetry().elements[0];
     expect(hit.warp).toBeGreaterThan(0);
-    expect(Math.max(...impacts)).toBeGreaterThan(0);
-    expect(Math.max(...impacts)).toBeLessThanOrEqual(0.4);
     expect(hit.compression).toBeGreaterThan(0.05);
     expect(hit.scaleY).toBeLessThan(1);
     expect(physics.engine.gravity.y).toBeGreaterThan(0);
@@ -126,34 +122,6 @@ describe('physical workflow', () => {
     expect(fixture.y).toBeGreaterThan(100);
     expect(physics.fixtures[0].body.bounds.max.y).toBeLessThan(602);
     expect(physics.entities).toHaveLength(0);
-    physics.dispose();
-  });
-  it('launches settled poster pieces back into the screen on renewed movement', () => {
-    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
-    Matter.Body.setPosition(physics.entities[0].body, { x: 200, y: 580 });
-    physics.shake(0.3, { x: 0, y: 1 });
-    for (let i = 0; i < 20; i++) physics.update(1000 / 60);
-    expect(physics.entities[0].body.position.y).toBeLessThan(440);
-    physics.dispose();
-  });
-
-  it('spreads right-side interface bodies across the screen even with vertical motion', () => {
-    const physics = new PosterPhysics(
-      { ...asset, elements: [] },
-      { ...DEFAULT_SETTINGS },
-    );
-    physics.setBounds({ x: 0, y: 0, width: 1000, height: 800 });
-    physics.setFixtures([
-      { id: 'wordmark', x: 900, y: 200, width: 180, height: 30 },
-    ]);
-    let leftmost = 900;
-    for (let i = 0; i < 14; i++) {
-      physics.shake(0.22, { x: 0, y: -0.2 });
-      for (let j = 0; j < 4; j++) physics.update(1000 / 60);
-      leftmost = Math.min(leftmost, physics.fixtures[0].body.position.x);
-    }
-    expect(leftmost).toBeLessThan(450);
-    expect(physics.fixtures).toHaveLength(1);
     physics.dispose();
   });
 });

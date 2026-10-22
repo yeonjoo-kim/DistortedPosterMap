@@ -15,7 +15,7 @@ export function useMotionInstrument(
   const [source, setSource] = useState<'sensor' | 'camera' | null>(null);
   const [status, setStatus] = useState<InputStatus>({
     state: 'idle',
-    message: '노트북의 움직임으로 연주하세요.',
+    message: '노트북의 실제 움직임으로 연주하세요.',
   });
   const [sample, setSample] = useState<MotionSample | null>(null);
   const [sound, setSound] = useState<

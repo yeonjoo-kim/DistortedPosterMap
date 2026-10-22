@@ -1,17 +1,3 @@
-@font-face {
-  font-family: MetaAccanthis;
-  src: url('/fonts/MetaAccanthis.ttf') format('truetype');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: MetaAccanthisAlternate;
-  src: url('/fonts/MetaAccanthisAlternate.ttf') format('truetype');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
 :root {
   font-family: Arial, 'Apple SD Gothic Neo', sans-serif;
   color: #14170f;
@@ -53,7 +39,7 @@ button {
   min-height: 100svh;
   position: relative;
   padding: var(--paper-gap) 0;
-  background: var(--poster-background, #f6ffbd);
+  background: #f6ffbd;
 }
 .wordmark {
   position: absolute;
@@ -111,7 +97,7 @@ button {
 .upload-button:hover {
   transform: translate(-50%, -50%) rotate(-6deg);
 }
-.upload-button svg {
+.upload-button img {
   width: 100%;
   height: 100%;
 }
@@ -123,13 +109,39 @@ button {
   transform: none;
   width: 51px;
   height: 51px;
-  background: var(--poster-background, #f6ffbd);
-  border: 1px solid currentColor;
-  border-radius: 8px;
+  background: rgba(246, 255, 189, 0.88);
+  border-radius: 50%;
   padding: 11px;
 }
 .replace-upload:hover {
   transform: rotate(-6deg);
+}
+.tape {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  width: 14.25%;
+  height: auto;
+  user-select: none;
+}
+.tape-coral {
+  left: -5.2%;
+  top: -2.2%;
+}
+.tape-blue {
+  right: -3.7%;
+  top: -2.4%;
+  width: 13.2%;
+}
+.tape-pink {
+  left: -3.6%;
+  bottom: -1.65%;
+  width: 15.8%;
+}
+.tape-green {
+  right: -3.5%;
+  bottom: -2.65%;
+  width: 13.8%;
 }
 .loading-indicator {
   position: absolute;
@@ -520,70 +532,5 @@ button {
   .about-button {
     top: 57px;
     width: 44px;
-  }
-}
-
-.controls {
-  color: #14170f;
-}
-.dark-poster .wordmark,
-.dark-poster .about-button img {
-  filter: invert(1);
-}
-.about-dialog {
-  color: #192111;
-}
-.floating-menu {
-  position: fixed;
-  z-index: 12;
-  width: min(260px, calc(100vw - 24px));
-  max-height: calc(100svh - 24px);
-  overflow: auto;
-  color: #14170f;
-}
-.floating-menu .popover {
-  position: relative;
-  bottom: auto;
-  right: auto;
-  width: 100%;
-}
-
-.studio,
-.floating-menu {
-  font-family:
-    var(--active-font, MetaAccanthis), 'Apple SD Gothic Neo', sans-serif;
-}
-.wordmark {
-  font-family: inherit;
-  font-size: 23px;
-  line-height: 28px;
-  white-space: nowrap;
-  width: 235px;
-  height: 28px;
-  text-align: right;
-}
-.about-button {
-  font-family: inherit;
-  font-size: 22px;
-  line-height: 28px;
-  width: 65px;
-  height: 28px;
-  text-align: right;
-}
-.coordinate > span,
-.download-button,
-.about-dialog p:first-of-type {
-  font-family: inherit;
-}
-.dark-poster .wordmark {
-  filter: none;
-}
-@media (max-width: 900px) {
-  .wordmark {
-    font-size: 21px;
-    width: 225px;
-  }
-  .about-button {
-    font-size: 20px;
   }
 }

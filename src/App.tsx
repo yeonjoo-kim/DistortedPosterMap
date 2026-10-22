@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { createPortal } from 'react-dom';
-import { Laptop, Plus, Volume2, VolumeX } from 'lucide-react';
+import { Laptop, Volume2, VolumeX } from 'lucide-react';
 import { loadPoster } from './lib/extract';
 import { exportMap, exportPoster } from './lib/export';
 import { PosterPhysics } from './lib/physics';
@@ -27,16 +26,13 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>({ ...DEFAULT_SETTINGS });
   const [telemetry, setTelemetry] = useState(empty);
   const [menu, setMenu] = useState<'motion' | 'download' | null>(null);
-  const [menuPosition, setMenuPosition] = useState({ left: 12, top: 12 });
-  const menuRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
-  const wordmarkRef = useRef<HTMLSpanElement>(null);
+  const wordmarkRef = useRef<HTMLImageElement>(null);
   const aboutRef = useRef<HTMLButtonElement>(null);
   const controlsRef = useRef<HTMLElement>(null);
-  const controlHovered = useRef(false);
   const menuTrigger = useRef<HTMLButtonElement | null>(null);
   const engineRef = useRef<PosterPhysics | null>(null);
   const settingsRef = useRef(settings);
@@ -44,17 +40,6 @@ export default function App() {
   settingsRef.current = settings;
   const input = useMotionInstrument(engineRef, settingsRef, setNotice);
   const { driveSound, impactSound } = input;
-  const background = asset?.color ?? '#f6ffbd';
-  const rgb = background.match(/[\d.]+/g)?.map(Number) ?? [246, 255, 189];
-  const dark =
-    rgb.length >= 3 && rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 < 135;
-
-  useEffect(() => {
-    document.documentElement.style.backgroundColor = background;
-    document
-      .querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', background);
-  }, [background]);
 
   useEffect(() => {
     if (!asset || !canvasRef.current) return;
@@ -127,7 +112,7 @@ export default function App() {
             node.style.transform = `translate(${(fixture.body.position.x - fixture.origin.x) * scale}px, ${(fixture.body.position.y - fixture.origin.y) * scale}px) rotate(${fixture.body.angle}rad)`;
         },
       );
-      driveSound(engine.energy);
+      driveSound(Math.max(engine.energy, engine.impactEnergy * 0.7));
       if (now - lastUi > 110) {
         setTelemetry(engine.telemetry());
         lastUi = now;
@@ -149,23 +134,12 @@ export default function App() {
   }, [asset, driveSound, impactSound]);
 
   useEffect(() => {
-    engineRef.current?.pinFixture(
-      'adjust-box',
-      !!menu || controlHovered.current,
-    );
-  }, [menu]);
-
-  useEffect(() => {
     if (!menu) return;
-    menuRef.current
+    controlsRef.current
       ?.querySelector<HTMLButtonElement>('[role="menuitem"]')
       ?.focus();
     const outside = (event: PointerEvent) => {
-      if (
-        !controlsRef.current?.contains(event.target as Node) &&
-        !menuRef.current?.contains(event.target as Node)
-      )
-        setMenu(null);
+      if (!controlsRef.current?.contains(event.target as Node)) setMenu(null);
     };
     const keyboard = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -174,7 +148,7 @@ export default function App() {
       }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         const items = [
-          ...(menuRef.current?.querySelectorAll<HTMLButtonElement>(
+          ...(controlsRef.current?.querySelectorAll<HTMLButtonElement>(
             '[role="menuitem"]',
           ) ?? []),
         ];
@@ -220,7 +194,6 @@ export default function App() {
     setLoading(true);
     setNotice('');
     setMenu(null);
-    setAbout(false);
     input.stopInput();
     try {
       const next = await loadPoster(file, 'normal');
@@ -272,37 +245,24 @@ export default function App() {
     trigger: HTMLButtonElement,
   ) => {
     menuTrigger.current = trigger;
-    const box = trigger.getBoundingClientRect();
-    setMenuPosition({
-      left: Math.max(12, Math.min(innerWidth - 272, box.right - 260)),
-      top: Math.max(12, Math.min(innerHeight - 380, box.top - 300)),
-    });
     setMenu(menu === next ? null : next);
   };
 
   return (
-    <main
-      className={`studio ${asset ? 'has-poster' : 'is-empty'} ${dark ? 'dark-poster' : ''} ${telemetry.active ? 'is-distorting' : ''}`}
-      style={
-        {
-          '--poster-background': background,
-          '--active-font': telemetry.active
-            ? 'MetaAccanthisAlternate'
-            : 'MetaAccanthis',
-          '--poster-ink': dark ? '#f8f8f0' : '#14170f',
-        } as CSSProperties
-      }
-    >
-      <span ref={wordmarkRef} className="wordmark">
-        Poster Distorting Map
-      </span>
+    <main className={`studio ${asset ? 'has-poster' : 'is-empty'}`}>
+      <img
+        ref={wordmarkRef}
+        className="wordmark"
+        src="/design/wordmark.svg"
+        alt="Poster Distorting Map"
+      />
       <button
         ref={aboutRef}
         className="about-button"
         aria-label="About"
         onClick={() => setAbout(true)}
       >
-        About
+        <img src="/design/about.svg" alt="About" />
       </button>
       {asset && (
         <canvas
@@ -350,13 +310,22 @@ export default function App() {
             disabled={loading}
             onClick={() => fileRef.current?.click()}
           >
-            <Plus aria-hidden="true" size={68} strokeWidth={1} />
+            <img src="/design/upload.svg" alt="" />
           </button>
           {loading && (
             <span className="loading-indicator" role="status">
               포스터를 여는 중…
             </span>
           )}
+          {['coral', 'blue', 'pink', 'green'].map((color) => (
+            <img
+              key={color}
+              className={`tape tape-${color}`}
+              src={`/design/tape-${color}.svg`}
+              alt=""
+              draggable={false}
+            />
+          ))}
         </div>
       </section>
       {asset && (
@@ -364,14 +333,6 @@ export default function App() {
           className="controls"
           ref={controlsRef}
           aria-label="포스터 컨트롤"
-          onPointerEnter={() => {
-            controlHovered.current = true;
-            engineRef.current?.pinFixture('adjust-box', true);
-          }}
-          onPointerLeave={() => {
-            controlHovered.current = false;
-            if (!menu) engineRef.current?.pinFixture('adjust-box', false);
-          }}
         >
           <div
             className={`motion-preview ${connected ? 'connected' : ''}`}
@@ -448,8 +409,8 @@ export default function App() {
               </button>
               <button
                 className={`icon-button ${connected ? 'is-active' : ''}`}
-                aria-label="움직임 감지"
-                title="움직임 감지"
+                aria-label="노트북 움직임 감지"
+                title="노트북 움직임 감지"
                 aria-expanded={menu === 'motion'}
                 aria-haspopup="menu"
                 onClick={(event) => toggleMenu('motion', event.currentTarget)}
@@ -470,83 +431,63 @@ export default function App() {
                 )}
               </button>
             </div>
-            {menu &&
-              createPortal(
-                <div
-                  ref={menuRef}
-                  className="floating-menu"
-                  style={
-                    {
-                      ...menuPosition,
-                      '--active-font': telemetry.active
-                        ? 'MetaAccanthisAlternate'
-                        : 'MetaAccanthis',
-                    } as CSSProperties
-                  }
+            {menu === 'download' && (
+              <div
+                className="popover download-menu"
+                role="menu"
+                aria-label="다운로드 형식"
+              >
+                {(['png', 'jpg', 'pdf', 'json'] as const).map((format) => (
+                  <button
+                    role="menuitem"
+                    key={format}
+                    onClick={() => void download(format)}
+                  >
+                    {format === 'json'
+                      ? '좌표 · 경로 JSON'
+                      : format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+            {menu === 'motion' && (
+              <div
+                className="popover motion-menu"
+                role="menu"
+                aria-label="움직임 감지 방식"
+              >
+                <p>
+                  MacBook에서는 카메라 추정을 사용하세요. 무늬가 있는 정지한
+                  배경이 필요합니다.
+                </p>
+                <button
+                  role="menuitem"
+                  onClick={() => input.startInput('camera')}
                 >
-                  {' '}
-                  {menu === 'download' && (
-                    <div
-                      className="popover download-menu"
-                      role="menu"
-                      aria-label="다운로드 형식"
-                    >
-                      {(['png', 'jpg', 'pdf', 'json'] as const).map(
-                        (format) => (
-                          <button
-                            role="menuitem"
-                            key={format}
-                            onClick={() => void download(format)}
-                          >
-                            {format === 'json'
-                              ? '좌표 · 경로 JSON'
-                              : format.toUpperCase()}
-                          </button>
-                        ),
-                      )}
-                    </div>
-                  )}
-                  {menu === 'motion' && (
-                    <div
-                      className="popover motion-menu"
-                      role="menu"
-                      aria-label="움직임 감지 방식"
-                    >
-                      <p>
-                        카메라 영상의 이동으로 움직임을 추정합니다. 무늬가 있는
-                        정지한 배경이 필요합니다.
-                      </p>
-                      <button
-                        role="menuitem"
-                        onClick={() => input.startInput('camera')}
-                      >
-                        카메라로 움직임 감지
-                      </button>
-                      <button
-                        role="menuitem"
-                        onClick={() => input.startInput('sensor')}
-                      >
-                        가속도 센서 확인
-                      </button>
-                      {input.source && (
-                        <button role="menuitem" onClick={input.stopInput}>
-                          움직임 감지 중지
-                        </button>
-                      )}
-                      <p className="connection-detail" aria-live="polite">
-                        {input.status.message}
-                      </p>
-                      {input.source === 'camera' && (
-                        <p>
-                          영상은 기기 안에서만 분석합니다. 사람이나 배경의
-                          움직임에도 반응할 수 있습니다.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>,
-                document.body,
-              )}
+                  카메라로 움직임 감지
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => input.startInput('sensor')}
+                >
+                  가속도 센서 확인
+                </button>
+                {input.source && (
+                  <button role="menuitem" onClick={input.stopInput}>
+                    움직임 감지 중지
+                  </button>
+                )}
+                <p className="connection-detail" aria-live="polite">
+                  {input.status.message}
+                </p>
+                {input.source === 'camera' && (
+                  <p>
+                    영상은 기기 안에서만 분석합니다. 배경의 움직임도 감지될 수
+                    있습니다.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </aside>
       )}
