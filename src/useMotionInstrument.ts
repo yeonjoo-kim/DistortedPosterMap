@@ -3,7 +3,7 @@ import type { RefObject } from 'react';
 import { PosterInstrument } from './lib/instrument';
 import { startDeviceMotion } from './lib/motion';
 import type { InputStatus, MotionSample } from './lib/motion';
-import { startBodyCamera } from './lib/poseCamera';
+import { startCameraMotion } from './lib/vision';
 import type { PosterPhysics } from './lib/physics';
 import type { Settings } from './lib/types';
 
@@ -15,7 +15,7 @@ export function useMotionInstrument(
   const [source, setSource] = useState<'sensor' | 'camera' | null>(null);
   const [status, setStatus] = useState<InputStatus>({
     state: 'idle',
-    message: '카메라 앞에서 몸을 움직여 연주하세요.',
+    message: '노트북의 움직임으로 연주하세요.',
   });
   const [sample, setSample] = useState<MotionSample | null>(null);
   const [sound, setSound] = useState<
@@ -95,7 +95,7 @@ export function useMotionInstrument(
       if (next === 'sensor')
         void startDeviceMotion(onSample, onStatus, control.signal);
       else if (videoRef.current)
-        void startBodyCamera(
+        void startCameraMotion(
           videoRef.current,
           onSample,
           onStatus,

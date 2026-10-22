@@ -5,7 +5,6 @@ import { Laptop, Plus, Volume2, VolumeX } from 'lucide-react';
 import { loadPoster } from './lib/extract';
 import { exportMap, exportPoster } from './lib/export';
 import { PosterPhysics } from './lib/physics';
-import { BODY_CONNECTIONS } from './lib/bodyMotion';
 import { DEFAULT_SETTINGS } from './lib/types';
 import type { PosterAsset, Settings, Telemetry } from './lib/types';
 import { useMotionInstrument } from './useMotionInstrument';
@@ -25,8 +24,6 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
   const [about, setAbout] = useState(false);
-  const [cameraPrompt, setCameraPrompt] = useState(false);
-  const promptRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<Settings>({ ...DEFAULT_SETTINGS });
   const [telemetry, setTelemetry] = useState(empty);
   const [menu, setMenu] = useState<'motion' | 'download' | null>(null);
@@ -58,37 +55,6 @@ export default function App() {
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute('content', background);
   }, [background]);
-
-  useEffect(() => {
-    if (input.status.state === 'connected') setCameraPrompt(false);
-  }, [input.status.state]);
-
-  useEffect(() => {
-    if (!cameraPrompt) return;
-    promptRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    const keyboard = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        input.stopInput();
-        setCameraPrompt(false);
-      }
-      if (event.key === 'Tab') {
-        const items = [
-          ...(promptRef.current?.querySelectorAll<HTMLButtonElement>(
-            'button:not(:disabled)',
-          ) ?? []),
-        ];
-        const current = items.indexOf(
-          document.activeElement as HTMLButtonElement,
-        );
-        items[
-          (current + (event.shiftKey ? -1 : 1) + items.length) % items.length
-        ]?.focus();
-        event.preventDefault();
-      }
-    };
-    window.addEventListener('keydown', keyboard);
-    return () => window.removeEventListener('keydown', keyboard);
-  }, [cameraPrompt, input.stopInput]);
 
   useEffect(() => {
     if (!asset || !canvasRef.current) return;
@@ -254,7 +220,6 @@ export default function App() {
     setLoading(true);
     setNotice('');
     setMenu(null);
-    setCameraPrompt(false);
     setAbout(false);
     input.stopInput();
     try {
@@ -262,7 +227,6 @@ export default function App() {
       if (id !== loadId.current) return;
       setTelemetry(empty);
       setAsset(next);
-      setCameraPrompt(true);
       setName(file.name);
     } catch (error) {
       if (id === loadId.current)
@@ -302,7 +266,7 @@ export default function App() {
       ) / area,
   );
   const connected = input.status.state === 'connected';
-  const sourceLabel = input.source === 'camera' ? '몸동작 감지' : '가속도 센서';
+  const sourceLabel = input.source === 'camera' ? '카메라 추정' : '가속도 센서';
   const toggleMenu = (
     next: 'motion' | 'download',
     trigger: HTMLButtonElement,
@@ -422,31 +386,6 @@ export default function App() {
               className={input.source === 'camera' ? 'camera-visible' : ''}
               aria-label="움직임 감지용 카메라 미리보기"
             />
-            {input.source === 'camera' && input.sample?.landmarks?.length ? (
-              <svg
-                className="body-overlay"
-                viewBox="0 0 1 1"
-                preserveAspectRatio="none"
-                aria-label="인식된 몸동작"
-              >
-                {BODY_CONNECTIONS.map(([a, b]) => {
-                  const first = input.sample?.landmarks?.[a],
-                    second = input.sample?.landmarks?.[b];
-                  return first &&
-                    second &&
-                    (first.visibility ?? 1) >= 0.55 &&
-                    (second.visibility ?? 1) >= 0.55 ? (
-                    <line
-                      key={`${a}-${b}`}
-                      x1={first.x}
-                      y1={first.y}
-                      x2={second.x}
-                      y2={second.y}
-                    />
-                  ) : null;
-                })}
-              </svg>
-            ) : null}
             <div className="motion-status" role="status">
               <span>{input.source ? sourceLabel : '움직임 감지'}</span>
               <span>
@@ -574,8 +513,8 @@ export default function App() {
                       aria-label="움직임 감지 방식"
                     >
                       <p>
-                        카메라를 고정하고 어깨와 팔이 보이도록 춤춰 주세요.
-                        몸동작의 크기로 소리와 파괴가 달라집니다.
+                        카메라 영상의 이동으로 움직임을 추정합니다. 무늬가 있는
+                        정지한 배경이 필요합니다.
                       </p>
                       <button
                         role="menuitem"
@@ -599,8 +538,8 @@ export default function App() {
                       </p>
                       {input.source === 'camera' && (
                         <p>
-                          사람의 관절 움직임을 기기 안에서만 분석합니다. 영상은
-                          저장하거나 전송하지 않습니다.
+                          영상은 기기 안에서만 분석합니다. 사람이나 배경의
+                          움직임에도 반응할 수 있습니다.
                         </p>
                       )}
                     </div>
@@ -610,56 +549,6 @@ export default function App() {
               )}
           </div>
         </aside>
-      )}
-      {cameraPrompt && (
-        <div className="about-backdrop camera-backdrop">
-          <div
-            ref={promptRef}
-            className="camera-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="camera-title"
-            aria-describedby="camera-description"
-          >
-            <span className="dialog-eyebrow">READY TO DISTORT</span>
-            <h1 id="camera-title">춤·몸동작 감지를 켭니다</h1>
-            <p id="camera-description">
-              카메라를 고정하고 어깨와 팔, 가능하면 전신이 보이도록 서 주세요.
-              몸동작이 클수록 헤비메탈 기타 소리와 포스터 파괴가 강해집니다.
-            </p>
-            <p>
-              카메라 영상은 기기 안에서만 분석하며 저장·전송하지 않습니다.
-              마이크는 사용하지 않습니다.
-            </p>
-            {input.source === 'camera' && (
-              <p className="camera-connection" role="status">
-                {input.status.message}
-              </p>
-            )}
-            <div className="dialog-actions">
-              <button
-                onClick={() => input.startInput('camera')}
-                disabled={
-                  input.source === 'camera' &&
-                  input.status.state === 'requesting'
-                }
-              >
-                {input.source === 'camera' &&
-                input.status.state === 'requesting'
-                  ? '카메라 연결 중…'
-                  : '카메라 감지 시작'}
-              </button>
-              <button
-                onClick={() => {
-                  input.stopInput();
-                  setCameraPrompt(false);
-                }}
-              >
-                나중에
-              </button>
-            </div>
-          </div>
-        </div>
       )}
       {about && (
         <div className="about-backdrop" onClick={() => setAbout(false)}>
@@ -679,7 +568,7 @@ export default function App() {
             </button>
             <p>Poster Distorting Map</p>
             <p>
-              포스터를 올리고 카메라 앞에서 몸동작으로 연주하세요. 작은 흔들림은
+              포스터를 올리고 노트북의 움직임으로 연주하세요. 작은 흔들림은
               부드럽게, 큰 흔들림은 조각으로 남습니다.
             </p>
             <p>파일과 카메라 영상은 기기 안에서만 처리됩니다.</p>

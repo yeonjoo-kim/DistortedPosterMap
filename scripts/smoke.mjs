@@ -47,11 +47,7 @@ try {
   browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--use-angle=swiftshader',
-      '--enable-unsafe-swiftshader',
-    ],
+    args: ['--no-sandbox'],
   });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 832 },
@@ -125,13 +121,11 @@ try {
     await choose('좌표 · 경로 JSON', target);
     return JSON.parse(await readFile(await (await promise).path(), 'utf8'));
   }
-  let promptRecorded = false;
   async function upload(
     buffer,
     name = 'fixture.png',
     mimeType = 'image/png',
     target = page,
-    useCameraPrompt = false,
   ) {
     await target
       .getByLabel('포스터 파일 선택')
@@ -141,23 +135,11 @@ try {
         document.querySelector('.paper')?.getAttribute('aria-busy') === 'false',
     );
     await target.getByLabel('왜곡되는 포스터', { exact: true }).waitFor();
-    const prompt = target.getByRole('dialog', {
-      name: '춤·몸동작 감지를 켭니다',
-      exact: true,
-    });
-    if ((await prompt.count()) && !promptRecorded) {
-      await target.screenshot({
-        path: 'test-results/camera-prompt.png',
-        fullPage: true,
-      });
-      assert((await prompt.textContent()).includes('저장·전송하지 않습니다'));
-      promptRecorded = true;
-      record(
-        'Upload opens a camera explanation with explicit activation and defer controls',
-      );
-    }
-    if ((await prompt.count()) && !useCameraPrompt)
-      await target.getByRole('button', { name: '나중에', exact: true }).click();
+    assert.equal(await target.getByRole('dialog').count(), 0);
+    assert.equal(
+      await target.locator('.camera-dialog, .body-overlay').count(),
+      0,
+    );
   }
   async function sensor(x, y = 0, z = 0) {
     await page.evaluate(
@@ -221,6 +203,9 @@ try {
   await upload(png);
   const initial = await map();
   assert(initial.elements.length >= 4);
+  record(
+    'Upload stays on the poster without a camera popup or body tracking UI',
+  );
   await page.evaluate(() =>
     Promise.all([
       document.fonts.load('20px MetaAccanthis'),
@@ -449,77 +434,55 @@ try {
 
   const cameraPage = await context.newPage();
   cameraPage.on('pageerror', (e) => errors.push(e.message));
-  await cameraPage.addInitScript(
-    (photo) => {
-      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
-        configurable: true,
-        value: async (constraints) => {
-          window.__cameraConstraints = constraints;
-          const image = new Image();
-          image.src = photo;
-          await image.decode();
-          const canvas = document.createElement('canvas');
-          canvas.width = 640;
-          canvas.height = 480;
-          const ctx = canvas.getContext('2d');
-          let phase = 0;
-          const draw = () => {
-            ctx.drawImage(image, 0, 0, 640, 480);
-            if (window.__cameraMove) {
-              phase += 0.4;
-              // Move the two arm regions while keeping the camera and scene fixed.
-              ctx.drawImage(image, 200, 100, 250, 100, 130, 190, 174, 68);
-              ctx.drawImage(image, 550, 100, 250, 100, 348, 190, 164, 68);
-              ctx.save();
-              ctx.translate(470 * 0.64, 326 * 0.72);
-              ctx.rotate(Math.sin(phase) * 0.8);
-              ctx.drawImage(
-                image,
-                235,
-                280,
-                240,
-                65,
-                -235 * 0.64,
-                -46 * 0.72,
-                240 * 0.64,
-                65 * 0.72,
-              );
-              ctx.restore();
-              ctx.save();
-              ctx.translate(535 * 0.64, 326 * 0.72);
-              ctx.rotate(-Math.sin(phase) * 0.8);
-              ctx.drawImage(
-                image,
-                535,
-                280,
-                240,
-                65,
-                0,
-                -46 * 0.72,
-                240 * 0.64,
-                65 * 0.72,
-              );
-              ctx.restore();
-            }
-          };
-          draw();
-          const stream = canvas.captureStream(12);
-          window.__cameraStream = stream;
-          setInterval(draw, 83);
-          return stream;
-        },
-      });
-    },
-    'data:image/jpeg;base64,' +
-      (await readFile('test-fixtures/pose.jpg')).toString('base64'),
-  );
+  const modelRequests = [];
+  cameraPage.on('request', (request) => {
+    if (request.url().includes('/pose/')) modelRequests.push(request.url());
+  });
+  await cameraPage.addInitScript(() => {
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+      configurable: true,
+      value: async (constraints) => {
+        window.__cameraConstraints = constraints;
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = 240;
+        const ctx = canvas.getContext('2d'),
+          pattern = document.createElement('canvas');
+        pattern.width = 512;
+        pattern.height = 256;
+        const p = pattern.getContext('2d');
+        let seed = 19371;
+        for (let y = 0; y < 256; y += 4)
+          for (let x = 0; x < 512; x += 4) {
+            seed = (seed * 16807) % 2147483647;
+            const value = (seed % 230) + 10;
+            p.fillStyle = `rgb(${value},${value},${value})`;
+            p.fillRect(x, y, 4, 4);
+          }
+        let offset = 0;
+        const draw = () => {
+          if (window.__cameraMove) offset = (offset + 3) % 128;
+          ctx.drawImage(pattern, offset, 0, 320, 240, 0, 0, 320, 240);
+        };
+        draw();
+        const stream = canvas.captureStream(24);
+        window.__cameraStream = stream;
+        const timer = setInterval(draw, 33);
+        stream
+          .getVideoTracks()[0]
+          .addEventListener('ended', () => clearInterval(timer));
+        return stream;
+      },
+    });
+  });
   await cameraPage.goto(`http://127.0.0.1:${port}`);
-  await upload(png, 'fixture.png', 'image/png', cameraPage, true);
+  await upload(png, 'fixture.png', 'image/png', cameraPage);
   assert.equal(
     await cameraPage.evaluate(() => !!window.__cameraConstraints),
     false,
   );
-  await click('카메라 감지 시작', cameraPage);
+  await menu('움직임 감지', cameraPage);
+  await choose('카메라로 움직임 감지', cameraPage);
   await cameraPage.waitForFunction(
     () =>
       document
@@ -528,18 +491,6 @@ try {
     undefined,
     { timeout: 90000 },
   );
-  await cameraPage.waitForFunction(
-    () => document.querySelectorAll('.body-overlay line').length >= 6,
-    undefined,
-    { timeout: 45000 },
-  );
-  record(
-    'The self-hosted real pose model detects an actual person and draws the tracked joints',
-  );
-  await cameraPage.screenshot({
-    path: 'test-results/person-detection.png',
-    fullPage: true,
-  });
   await cameraPage.waitForTimeout(450);
   assert.equal(
     await cameraPage.evaluate(() => window.__cameraConstraints.audio),
@@ -559,15 +510,16 @@ try {
   for (let i = 0; i < 15; i++) {
     await cameraPage.waitForTimeout(300);
     cameraMap = await map(cameraPage);
-    if (cameraMap.input?.tracking === 'body' && cameraMap.input.strength > 0.1)
+    if (cameraMap.input?.source === 'camera' && cameraMap.input.strength > 0.1)
       break;
   }
   assert.equal(cameraMap.input.source, 'camera');
-  assert.equal(cameraMap.input.tracking, 'body');
+  assert(!('tracking' in cameraMap.input));
+  assert.equal(await cameraPage.locator('.body-overlay').count(), 0);
   assert(cameraMap.input.strength > 0.1, JSON.stringify(cameraMap.input));
   assert(cameraMap.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
   record(
-    'Articulated arm frames drive real pose inference, material and guitar without requesting a microphone',
+    'The restored optical-flow camera drives material and sound without body recognition or a microphone',
   );
   await menu('움직임 감지', cameraPage);
   await choose('움직임 감지 중지', cameraPage);
@@ -581,6 +533,7 @@ try {
     await cameraPage.locator('video').evaluate((v) => v.srcObject),
     null,
   );
+  assert.deepEqual(modelRequests, []);
   await cameraPage.close();
   record('Stopping detection releases the camera track');
   const denied = await context.newPage();
@@ -592,19 +545,22 @@ try {
     });
   });
   await denied.goto(`http://127.0.0.1:${port}`);
-  await upload(png, 'fixture.png', 'image/png', denied, true);
-  await click('카메라 감지 시작', denied);
+  await upload(png, 'fixture.png', 'image/png', denied);
+  await menu('움직임 감지', denied);
+  await choose('카메라로 움직임 감지', denied);
   await denied.waitForFunction(() =>
     document
-      .querySelector('.camera-connection')
+      .querySelector('.connection-detail')
       ?.textContent.includes('허용되지'),
   );
-  assert.equal(await denied.getByRole('dialog').count(), 1);
-  await click('나중에', denied);
   assert.equal(await denied.getByRole('dialog').count(), 0);
+  assert.equal(
+    await denied.getByTestId('motion-status').getAttribute('data-state'),
+    'denied',
+  );
   await denied.close();
   record(
-    'Camera permission denial stays in the prompt with retry and defer options',
+    'Camera permission denial is reported in the existing motion menu without a popup',
   );
 
   await page.setViewportSize({ width: 390, height: 844 });
