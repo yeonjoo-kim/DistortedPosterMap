@@ -1,4 +1,3 @@
-export type Effect = 'gravity' | 'zigzag' | 'fracture';
 export type Detail = 'coarse' | 'normal' | 'fine';
 export type ElementKind = 'text' | 'shape' | 'region' | 'fragment';
 export type Point = { x: number; y: number };
@@ -23,10 +22,6 @@ export interface PosterAsset {
   pageCount: number;
 }
 export interface Settings {
-  effect: Effect;
-  intensity: number;
-  gravity: number;
-  restitution: number;
   showPaths: boolean;
   showLabels: boolean;
   paused: boolean;
@@ -44,18 +39,20 @@ export interface ElementTelemetry {
   rotation: number;
   speed: number;
   warp: number;
+  compression: number;
+  damage: number;
+  scaleX: number;
+  scaleY: number;
   path: Point[];
 }
 export interface Telemetry {
   elements: ElementTelemetry[];
   energy: number;
   active: boolean;
+  impact: number;
+  deformation: number;
 }
 export const DEFAULT_SETTINGS: Settings = {
-  effect: 'gravity',
-  intensity: 55,
-  gravity: 65,
-  restitution: 45,
   showPaths: true,
   showLabels: false,
   paused: false,

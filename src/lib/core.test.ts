@@ -41,15 +41,16 @@ describe('foreground separation', () => {
 });
 
 describe('proportional physical input', () => {
-  it('scales force with both actual shaking amplitude and sensitivity', () => {
-    expect(shakeImpulse(50, 0.4)).toBeCloseTo(0.2);
-    expect(shakeImpulse(100, 0.4)).toBeCloseTo(0.4);
-    expect(shakeImpulse(50, 0.8)).toBeCloseTo(0.4);
-    expect(shakeImpulse(0, 1)).toBe(0);
+  it('uses only measured amplitude, without a sensitivity multiplier', () => {
+    expect(shakeImpulse(0.2)).toBeCloseTo(0.2);
+    expect(shakeImpulse(0.4)).toBeCloseTo(0.4);
+    expect(shakeImpulse(0)).toBe(0);
   });
-  it('clamps exceptional sensor values', () => {
-    expect(shakeImpulse(200, 500)).toBe(1);
-    expect(shakeImpulse(-20, 1)).toBe(0);
+  it('rejects nonfinite inputs and clamps exceptional sensor values', () => {
+    expect(shakeImpulse(500)).toBe(1);
+    expect(shakeImpulse(-20)).toBe(0);
+    expect(shakeImpulse(NaN)).toBe(0);
+    expect(shakeImpulse(Infinity)).toBe(0);
   });
   it('has continuous alternating zigzag coordinates proportional to amplitude', () => {
     expect([0, 25, 50, 75, 100].map((y) => zigzagOffset(y, 100, 10))).toEqual([

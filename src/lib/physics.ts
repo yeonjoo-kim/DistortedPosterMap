@@ -1,6 +1,7 @@
 import Matter from 'matter-js';
 import { canvas } from './demo';
-import { clamp, shakeImpulse, zigzagOffset } from './math';
+import { clamp, shakeImpulse, clayOffset, materialResponse } from './math';
+import type { MotionSample } from './motion';
 import type {
   ElementTelemetry,
   Point,
@@ -17,7 +18,26 @@ interface Entity {
   origin: Point;
   path: Point[];
   warp: number;
+  sharpness: number;
+  compression: number;
+  damage: number;
+  scaleX: number;
+  scaleY: number;
+  strain: number;
+  releaseThreshold: number;
   parentId?: string;
+  sourceMap?: {
+    clipX: number;
+    clipY: number;
+    pad: number;
+    warp: number;
+    sharpness: number;
+    scaleX: number;
+    scaleY: number;
+    height: number;
+    origin: Point;
+    anchor: Point;
+  };
 }
 
 export class PosterPhysics {
@@ -30,9 +50,14 @@ export class PosterPhysics {
   settings: Settings;
   selected: string | null = null;
   energy = 0;
+  impactEnergy = 0;
   active = false;
+  lastInput: MotionSample | null = null;
+  onImpact?: (strength: number) => void;
   private toBreak = new Set<Entity>();
   private frame = 0;
+  private peak = 0;
+  private peakAge = 0;
 
   constructor(asset: PosterAsset, settings: Settings) {
     this.asset = asset;
@@ -44,40 +69,69 @@ export class PosterPhysics {
       Matter.Bodies.rectangle(w + 40, h / 2, 80, h + 160, { isStatic: true }),
       Matter.Bodies.rectangle(w / 2, -40, w + 160, 80, { isStatic: true }),
     ]);
-    for (const element of asset.elements) {
+    asset.elements.forEach((element, index) => {
       const body = Matter.Bodies.rectangle(
         element.x,
         element.y,
         Math.max(3, element.width - 2),
         Math.max(3, element.height - 2),
-        {
-          friction: 0.35,
-          frictionAir: 0.025,
-          restitution: settings.restitution / 100,
-        },
+        { friction: 0.65, frictionAir: 0.035, restitution: 0.05 },
       );
-      // Initialize a finite dynamic mass before saving the original static state.
       Matter.Body.setStatic(body, true);
-      const entity: Entity = {
+      this.entities.push({
         element,
         body,
         anchor: { x: element.width / 2, y: element.height / 2 },
         origin: { x: element.x, y: element.y },
         path: [{ x: element.x, y: element.y }],
         warp: 0,
-      };
-      this.entities.push(entity);
+        sharpness: 0,
+        compression: 0,
+        damage: 0,
+        scaleX: 1,
+        scaleY: 1,
+        strain: 0,
+        releaseThreshold:
+          0.035 +
+          (((index * 7) % Math.max(1, asset.elements.length)) /
+            Math.max(1, asset.elements.length)) *
+            0.3,
+      });
       Matter.Composite.add(this.engine.world, body);
-    }
+    });
     Matter.Events.on(this.engine, 'collisionStart', (event) => {
-      if (this.settings.effect !== 'fracture') return;
       for (const pair of event.pairs) {
+        const relative = Matter.Vector.sub(
+          pair.bodyA.velocity,
+          pair.bodyB.velocity,
+        );
+        const speed = Math.abs(
+          Matter.Vector.dot(relative, pair.collision.normal),
+        );
+        const impact = clamp(speed / 13, 0, 1);
+        if (impact < 0.035) continue;
+        this.impactEnergy = Math.max(this.impactEnergy, impact);
+        this.onImpact?.(impact * (0.35 + this.energy * 0.65));
         for (const body of [pair.bodyA, pair.bodyB]) {
           const entity = this.entities.find((e) => e.body === body);
+          if (!entity || body.isStatic) continue;
+          entity.compression = Math.min(
+            0.47,
+            entity.compression + impact * 0.36,
+          );
+          entity.warp = Math.min(
+            entity.element.width * 0.27,
+            entity.warp + impact * Math.min(18, entity.element.width * 0.12),
+          );
+          entity.damage = Math.min(
+            1,
+            entity.damage + impact * impact * (0.1 + this.peak * 0.35),
+          );
           if (
-            entity &&
             !entity.parentId &&
-            body.speed > 2.5 &&
+            this.peak >= 0.65 &&
+            this.peakAge < 1.8 &&
+            speed > 3.7 &&
             entity.element.width > 20 &&
             entity.element.height > 14
           )
@@ -87,62 +141,111 @@ export class PosterPhysics {
     });
   }
 
-  shake(
-    amplitude = 1,
-    direction: Point = { x: (Math.random() - 0.5) * 2, y: -1 },
-  ) {
+  applyMotion(sample: MotionSample) {
+    this.shake(sample.strength, sample.direction);
+    this.lastInput = { ...sample, direction: { ...sample.direction } };
+  }
+
+  shake(amplitude = 0.55, direction: Point = { x: 0.85, y: -0.95 }) {
     if (this.settings.paused || this.settings.original) return;
-    const strength = shakeImpulse(this.settings.intensity, amplitude);
-    if (strength <= 0) return;
+    const strength = shakeImpulse(amplitude);
+    if (strength < 0.012) return;
     this.active = true;
     this.energy = Math.max(this.energy, strength);
+    if (strength > this.peak || this.peakAge > 1.8) {
+      this.peak = strength;
+      this.peakAge = 0;
+    }
+    const profile = materialResponse(strength);
     for (const entity of this.entities) {
+      entity.strain += strength * 0.52;
+      if (
+        entity.body.isStatic &&
+        strength < 0.72 &&
+        entity.strain < entity.releaseThreshold
+      )
+        continue;
       Matter.Body.setStatic(entity.body, false);
       Matter.Sleeping.set(entity.body, false);
-      entity.body.restitution = this.settings.restitution / 100;
+      entity.body.restitution = profile.restitution;
       const jitter = Math.random() - 0.5;
       Matter.Body.setVelocity(entity.body, {
         x: clamp(
-          entity.body.velocity.x + (direction.x * 15 + jitter * 12) * strength,
-          -28,
-          28,
+          entity.body.velocity.x + (direction.x * 15 + jitter * 5) * strength,
+          -30,
+          30,
         ),
         y: clamp(
-          entity.body.velocity.y + (direction.y * 12 + jitter * 8) * strength,
-          -28,
-          28,
+          entity.body.velocity.y + (direction.y * 12 + jitter * 4) * strength,
+          -30,
+          30,
         ),
       });
       Matter.Body.setAngularVelocity(
         entity.body,
-        (Math.random() - 0.5) * strength * 0.14,
+        clamp(
+          entity.body.angularVelocity +
+            (Math.random() - 0.5) * strength * 0.075,
+          -0.2,
+          0.2,
+        ),
       );
-      if (this.settings.effect === 'zigzag')
-        entity.warp = Math.min(
-          entity.element.width * 0.3,
-          entity.warp + strength * Math.min(36, entity.element.width * 0.18),
-        );
+      entity.warp = Math.min(
+        entity.element.width * 0.27,
+        entity.warp + strength * Math.min(14, entity.element.width * 0.09),
+      );
+      entity.sharpness = Math.max(entity.sharpness, strength);
+      entity.compression = Math.min(
+        0.47,
+        entity.compression + strength * 0.055,
+      );
     }
   }
 
   update(delta: number) {
     if (this.settings.paused || this.settings.original) return;
-    this.energy *= 0.974;
+    const dt = clamp(delta, 0, 1000 / 60) / 1000;
+    this.energy *= Math.exp(-dt * 2.5);
+    this.impactEnergy *= Math.exp(-dt * 4);
+    this.peakAge += dt;
     if (!this.active) return;
-    this.engine.gravity.y =
-      (this.settings.gravity / 100) *
-      (this.settings.effect === 'zigzag' ? 0.12 : 1);
-    Matter.Engine.update(this.engine, Math.min(delta, 1000 / 60));
+    this.engine.gravity.y = materialResponse(this.energy).gravity;
+    Matter.Engine.update(this.engine, Math.max(0.1, dt * 1000));
     this.frame++;
-    if (this.settings.effect === 'fracture' && this.entities.length < 220) {
-      for (const entity of [...this.toBreak].slice(0, 4)) {
+    if (this.entities.length < 220)
+      for (const entity of [...this.toBreak].slice(0, 3)) {
         if (this.entities.length + 3 > 220) break;
         this.fracture(entity);
       }
-    }
     this.toBreak.clear();
     for (const entity of this.entities) {
-      // Keep numerical instability from losing pieces beyond the export area.
+      entity.compression *= Math.exp(-dt * 4.2);
+      entity.warp *= Math.exp(-dt * 0.065);
+      entity.sharpness = Math.max(
+        this.energy,
+        entity.sharpness * Math.exp(-dt * 0.45),
+      );
+      if (!entity.body.isStatic) {
+        const compression = entity.compression + entity.damage * 0.035;
+        const sx = 1 + compression * 0.72,
+          sy = 1 - compression * 0.62;
+        if (
+          Math.abs(sx - entity.scaleX) + Math.abs(sy - entity.scaleY) >
+          0.001
+        ) {
+          const angle = entity.body.angle;
+          Matter.Body.setAngle(entity.body, 0);
+          Matter.Body.scale(
+            entity.body,
+            sx / entity.scaleX,
+            sy / entity.scaleY,
+          );
+          Matter.Body.setAngle(entity.body, angle);
+          entity.scaleX = sx;
+          entity.scaleY = sy;
+        }
+        entity.body.restitution = materialResponse(this.energy).restitution;
+      }
       if (
         !Number.isFinite(entity.body.position.x) ||
         !Number.isFinite(entity.body.position.y)
@@ -176,15 +279,41 @@ export class PosterPhysics {
   private fracture(entity: Entity) {
     if (!this.entities.includes(entity) || entity.parentId) return;
     const { element: el, body } = entity;
+    const pad = Math.ceil(entity.warp + 2);
+    const texture = canvas(
+      (el.width + pad * 2) * entity.scaleX,
+      el.height * entity.scaleY,
+    );
+    const textureCtx = texture.getContext('2d')!;
+    textureCtx.scale(entity.scaleX, entity.scaleY);
+    const strip = Math.max(1, Math.ceil(el.height / 70));
+    for (let y = 0; y < el.height; y += strip) {
+      const h = Math.min(strip, el.height - y);
+      textureCtx.drawImage(
+        el.sprite,
+        0,
+        y,
+        el.width,
+        h,
+        pad + clayOffset(y, el.height, entity.warp, entity.sharpness),
+        y,
+        el.width,
+        h,
+      );
+    }
+    const parentAnchor = {
+      x: (entity.anchor.x + pad) * entity.scaleX,
+      y: entity.anchor.y * entity.scaleY,
+    };
     const center = {
-      x: el.width * (0.4 + Math.random() * 0.2),
-      y: el.height * (0.4 + Math.random() * 0.2),
+      x: texture.width * (0.4 + Math.random() * 0.2),
+      y: texture.height * (0.4 + Math.random() * 0.2),
     };
     const corners = [
       { x: 0, y: 0 },
-      { x: el.width, y: 0 },
-      { x: el.width, y: el.height },
-      { x: 0, y: el.height },
+      { x: texture.width, y: 0 },
+      { x: texture.width, y: texture.height },
+      { x: 0, y: texture.height },
     ];
     const fragments: Entity[] = [];
     for (let i = 0; i < 4; i++) {
@@ -203,13 +332,13 @@ export class PosterPhysics {
       );
       ctx.closePath();
       ctx.clip();
-      ctx.drawImage(el.sprite, -minX, -minY);
+      ctx.drawImage(texture, -minX, -minY);
       const centroid = {
         x: points.reduce((s, p) => s + p.x, 0) / 3,
         y: points.reduce((s, p) => s + p.y, 0) / 3,
       };
-      const dx = centroid.x - entity.anchor.x,
-        dy = centroid.y - entity.anchor.y;
+      const dx = centroid.x - parentAnchor.x,
+        dy = centroid.y - parentAnchor.y;
       const world = {
         x:
           body.position.x +
@@ -220,7 +349,18 @@ export class PosterPhysics {
           dx * Math.sin(body.angle) +
           dy * Math.cos(body.angle),
       };
-      const origin = { x: entity.origin.x + dx, y: entity.origin.y + dy };
+      const origin = {
+        x:
+          entity.origin.x +
+          dx / entity.scaleX -
+          clayOffset(
+            centroid.y / entity.scaleY,
+            el.height,
+            entity.warp,
+            entity.sharpness,
+          ),
+        y: entity.origin.y + dy / entity.scaleY,
+      };
       const fragmentBody = Matter.Bodies.fromVertices(
         world.x,
         world.y,
@@ -228,7 +368,7 @@ export class PosterPhysics {
         {
           friction: 0.35,
           frictionAir: 0.025,
-          restitution: this.settings.restitution / 100,
+          restitution: materialResponse(this.energy).restitution,
         },
       );
       Matter.Body.setAngle(fragmentBody, body.angle);
@@ -258,7 +398,26 @@ export class PosterPhysics {
         origin,
         path: [origin, world],
         warp: 0,
+        sharpness: entity.sharpness,
+        compression: 0,
+        damage: entity.damage * 0.5,
+        scaleX: 1,
+        scaleY: 1,
+        strain: 1,
+        releaseThreshold: 0,
         parentId: el.id,
+        sourceMap: {
+          clipX: minX,
+          clipY: minY,
+          pad,
+          warp: entity.warp,
+          sharpness: entity.sharpness,
+          scaleX: entity.scaleX,
+          scaleY: entity.scaleY,
+          height: el.height,
+          origin: { ...entity.origin },
+          anchor: { ...entity.anchor },
+        },
       });
     }
     Matter.Composite.remove(this.engine.world, body);
@@ -293,6 +452,7 @@ export class PosterPhysics {
         ctx.save();
         ctx.translate(body.position.x, body.position.y);
         ctx.rotate(body.angle);
+        ctx.scale(entity.scaleX, entity.scaleY);
         if (warp > 0.1) {
           const strip = Math.max(1, Math.ceil(el.height / 70));
           for (let y = 0; y < el.height; y += strip) {
@@ -303,7 +463,7 @@ export class PosterPhysics {
               y,
               el.width,
               h,
-              -anchor.x + zigzagOffset(y, el.height, warp),
+              -anchor.x + clayOffset(y, el.height, warp, entity.sharpness),
               y - anchor.y,
               el.width,
               h,
@@ -407,8 +567,28 @@ export class PosterPhysics {
     return {
       active: this.active,
       energy: this.energy,
+      impact: this.impactEnergy,
+      deformation: Math.max(
+        0,
+        ...this.entities.map((e) =>
+          Math.min(
+            1,
+            e.compression * 2 + e.warp / Math.max(20, e.element.width * 0.25),
+          ),
+        ),
+      ),
       elements: this.entities.map(
-        ({ element, body, origin, path, warp }): ElementTelemetry => ({
+        ({
+          element,
+          body,
+          origin,
+          path,
+          warp,
+          compression,
+          damage,
+          scaleX,
+          scaleY,
+        }): ElementTelemetry => ({
           id: element.id,
           label: element.label,
           x: body.position.x,
@@ -420,9 +600,31 @@ export class PosterPhysics {
           rotation: (body.angle * 180) / Math.PI,
           speed: body.speed,
           warp,
+          compression,
+          damage,
+          scaleX,
+          scaleY,
           path: path.map((p) => ({ ...p })),
         }),
       ),
+    };
+  }
+
+  private sourcePoint(entity: Entity, x: number, y: number): Point {
+    const map = entity.sourceMap;
+    if (!map)
+      return {
+        x: entity.origin.x + x - entity.anchor.x,
+        y: entity.origin.y + y - entity.anchor.y,
+      };
+    const sourceY = (map.clipY + y) / map.scaleY;
+    const sourceX =
+      (map.clipX + x) / map.scaleX -
+      map.pad -
+      clayOffset(sourceY, map.height, map.warp, map.sharpness);
+    return {
+      x: map.origin.x + sourceX - map.anchor.x,
+      y: map.origin.y + sourceY - map.anchor.y,
     };
   }
 
@@ -434,24 +636,29 @@ export class PosterPhysics {
       const originalX = entity.element.width / 2 - entity.anchor.x;
       const localX =
         originalX +
-        zigzagOffset(
+        clayOffset(
           entity.element.height * t,
           entity.element.height,
           entity.warp,
+          entity.sharpness,
         );
       const angle = entity.body.angle;
       return {
         id: `P${i}`,
-        before: { x: entity.origin.x + originalX, y: entity.origin.y + localY },
+        before: this.sourcePoint(
+          entity,
+          entity.element.width / 2,
+          entity.element.height * t,
+        ),
         after: {
           x:
             entity.body.position.x +
-            localX * Math.cos(angle) -
-            localY * Math.sin(angle),
+            localX * entity.scaleX * Math.cos(angle) -
+            localY * entity.scaleY * Math.sin(angle),
           y:
             entity.body.position.y +
-            localX * Math.sin(angle) +
-            localY * Math.cos(angle),
+            localX * entity.scaleX * Math.sin(angle) +
+            localY * entity.scaleY * Math.cos(angle),
         },
       };
     });
@@ -459,7 +666,10 @@ export class PosterPhysics {
 
   mapData() {
     return {
-      version: 1,
+      version: 2,
+      material:
+        'damp clay — gravity, plastic deformation and collision fracture',
+      input: this.lastInput,
       units: 'poster pixels',
       width: this.asset.width,
       height: this.asset.height,
@@ -468,24 +678,31 @@ export class PosterPhysics {
       elements: this.telemetry().elements.map((data) => {
         const entity = this.entities.find((e) => e.element.id === data.id)!;
         const vertices: Point[] = [];
+        const sourceVertices: Point[] = [];
         for (let i = 0; i <= 8; i++)
           for (const edge of [0, entity.element.width]) {
             const y = (i * entity.element.height) / 8;
             const lx =
                 edge -
                 entity.anchor.x +
-                zigzagOffset(y, entity.element.height, entity.warp),
+                clayOffset(
+                  y,
+                  entity.element.height,
+                  entity.warp,
+                  entity.sharpness,
+                ),
               ly = y - entity.anchor.y;
             vertices.push({
               x:
                 data.x +
-                lx * Math.cos(entity.body.angle) -
-                ly * Math.sin(entity.body.angle),
+                lx * entity.scaleX * Math.cos(entity.body.angle) -
+                ly * entity.scaleY * Math.sin(entity.body.angle),
               y:
                 data.y +
-                lx * Math.sin(entity.body.angle) +
-                ly * Math.cos(entity.body.angle),
+                lx * entity.scaleX * Math.sin(entity.body.angle) +
+                ly * entity.scaleY * Math.cos(entity.body.angle),
             });
+            sourceVertices.push(this.sourcePoint(entity, edge, y));
           }
         return {
           ...data,
@@ -496,6 +713,7 @@ export class PosterPhysics {
             y: v.y,
           })),
           deformationVertices: vertices,
+          sourceVertices,
           deformationPath: this.deformationPoints(data.id),
         };
       }),

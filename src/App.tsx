@@ -26,7 +26,11 @@ import {
   Radio,
   RotateCcw,
   ScanLine,
-  Settings2,
+  Mic2,
+  Camera,
+  Volume2,
+  VolumeX,
+  Square,
   ShieldCheck,
   Split,
   Waves,
@@ -37,74 +41,11 @@ import { loadPoster } from './lib/extract';
 import { exportMap, exportPoster } from './lib/export';
 import { PosterPhysics } from './lib/physics';
 import { DEFAULT_SETTINGS } from './lib/types';
-import type { Detail, Effect, Settings, Telemetry } from './lib/types';
+import type { Detail, Settings, Telemetry } from './lib/types';
+import { useMotionInstrument } from './useMotionInstrument';
 
-const EFFECTS = [
-  {
-    id: 'gravity' as Effect,
-    label: '쏟아지기',
-    english: 'GRAVITY',
-    icon: ArrowDown,
-    description: '중력을 따라 요소들이 떨어지고 쌓입니다.',
-  },
-  {
-    id: 'zigzag' as Effect,
-    label: '지그재그',
-    english: 'ZIGZAG',
-    icon: Waves,
-    description: '흔드는 강도에 따라 형태가 지그재그로 어긋납니다.',
-  },
-  {
-    id: 'fracture' as Effect,
-    label: '조각나기',
-    english: 'FRACTURE',
-    icon: Split,
-    description: '충돌한 요소가 작은 파편으로 나뉩니다.',
-  },
-];
 const fmt = (n: number, digits = 1) =>
   Number.isFinite(n) ? n.toFixed(digits) : '0.0';
-
-function Slider({
-  label,
-  value,
-  onChange,
-  unit = '%',
-  min = 0,
-  max = 100,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  unit?: string;
-  min?: number;
-  max?: number;
-}) {
-  return (
-    <label className="slider-control">
-      <span className="control-label">
-        {label}
-        <span className="value-tag">
-          {value}
-          <small>{unit}</small>
-        </span>
-      </span>
-      <input
-        aria-label={label}
-        type="range"
-        min={min}
-        max={max}
-        value={value}
-        style={
-          {
-            '--range': `${((value - min) / (max - min)) * 100}%`,
-          } as React.CSSProperties
-        }
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-    </label>
-  );
-}
 
 function Toggle({
   label,
@@ -153,10 +94,10 @@ export default function App() {
     elements: [],
     energy: 0,
     active: false,
+    impact: 0,
+    deformation: 0,
   });
   const [resetKey, setResetKey] = useState(0);
-  const [sensorEnabled, setSensorEnabled] = useState(false);
-  const [sensorConnected, setSensorConnected] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [format, setFormat] = useState<'png' | 'jpg' | 'pdf'>('png');
@@ -184,10 +125,13 @@ export default function App() {
     moved: boolean;
   } | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const input = useMotionInstrument(engineRef, settingsRef, setNotice);
+  const { driveSound, impactSound, testMotion } = input;
 
   useEffect(() => {
     const engine = new PosterPhysics(asset, settingsRef.current);
     engineRef.current = engine;
+    engine.onImpact = impactSound;
     setSelected(null);
     setTelemetry(engine.telemetry());
     const surface = canvasRef.current!;
@@ -204,6 +148,7 @@ export default function App() {
       engine.update(now - last);
       last = now;
       engine.render(ctx);
+      driveSound(engine.energy);
       if (now - lastTelemetry > 110) {
         setTelemetry(engine.telemetry());
         lastTelemetry = now;
@@ -218,7 +163,7 @@ export default function App() {
       engine.dispose();
       if (engineRef.current === engine) engineRef.current = null;
     };
-  }, [asset, resetKey]);
+  }, [asset, resetKey, driveSound, impactSound]);
 
   useEffect(() => {
     if (engineRef.current) engineRef.current.selected = selected;
@@ -245,12 +190,7 @@ export default function App() {
     return () => observer.disconnect();
   }, [asset]);
 
-  const shake = useCallback(() => {
-    engineRef.current?.shake(1, {
-      x: (Math.random() > 0.5 ? 1 : -1) * 0.85,
-      y: -0.95,
-    });
-  }, []);
+  const shake = useCallback(() => testMotion(), [testMotion]);
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
       if (
@@ -275,47 +215,6 @@ export default function App() {
     const timeout = window.setTimeout(() => setNotice(''), 5000);
     return () => window.clearTimeout(timeout);
   }, [notice]);
-
-  useEffect(() => {
-    if (!sensorEnabled) return;
-    let previous: { x: number; y: number; z: number } | null = null,
-      received = false,
-      last = 0;
-    const handler = (e: DeviceMotionEvent) => {
-      const a = e.accelerationIncludingGravity || e.acceleration;
-      if (a?.x == null || a.y == null || a.z == null) return;
-      received = true;
-      setSensorConnected(true);
-      const current = { x: a.x, y: a.y, z: a.z };
-      if (previous && performance.now() - last > 65) {
-        const dx = current.x - previous.x,
-          dy = current.y - previous.y,
-          dz = current.z - previous.z;
-        const magnitude = Math.hypot(dx, dy, dz);
-        if (magnitude > 1.2)
-          engineRef.current?.shake(Math.min(1, magnitude / 22), {
-            x: -dx / Math.max(1, magnitude),
-            y: dy / Math.max(1, magnitude),
-          });
-        last = performance.now();
-      }
-      previous = current;
-    };
-    window.addEventListener('devicemotion', handler);
-    const timeout = window.setTimeout(() => {
-      if (!received) {
-        setSensorEnabled(false);
-        setSensorConnected(false);
-        setNotice(
-          '움직임 센서가 감지되지 않았습니다. 캔버스 드래그나 흔들기 버튼을 사용해 주세요.',
-        );
-      }
-    }, 4000);
-    return () => {
-      window.removeEventListener('devicemotion', handler);
-      window.clearTimeout(timeout);
-    };
-  }, [sensorEnabled]);
 
   useEffect(() => {
     if (!exportOpen && !helpOpen) return;
@@ -442,7 +341,7 @@ export default function App() {
     const distance = Math.hypot(dx, dy),
       speed = distance / Math.max(1, now - p.time);
     if (p.moved && now - p.shakeAt > 50 && speed > 0.08) {
-      engineRef.current?.shake(Math.min(1, speed / 1.6), {
+      testMotion(Math.min(1, speed / 1.6), {
         x: dx / Math.max(1, distance),
         y: dy / Math.max(1, distance),
       });
@@ -464,41 +363,6 @@ export default function App() {
     }
     pointer.current = null;
     setDragging(false);
-  };
-
-  const connectSensor = async () => {
-    if (sensorEnabled) {
-      setSensorEnabled(false);
-      setSensorConnected(false);
-      return;
-    }
-    const motion = window.DeviceMotionEvent as
-      | (typeof DeviceMotionEvent & {
-          requestPermission?: () => Promise<string>;
-        })
-      | undefined;
-    if (!motion) {
-      setNotice(
-        '이 브라우저는 기기 움직임 센서를 지원하지 않습니다. 캔버스를 드래그해 주세요.',
-      );
-      return;
-    }
-    try {
-      if (
-        motion.requestPermission &&
-        (await motion.requestPermission()) !== 'granted'
-      ) {
-        setNotice(
-          '센서 사용이 허용되지 않았습니다. 드래그와 흔들기 버튼은 계속 사용할 수 있습니다.',
-        );
-        return;
-      }
-      setSensorEnabled(true);
-    } catch {
-      setNotice(
-        '센서에 연결하지 못했습니다. HTTPS 환경에서 다시 시도하거나 캔버스를 드래그해 주세요.',
-      );
-    }
   };
 
   const openExport = () => {
@@ -547,7 +411,6 @@ export default function App() {
   const deformationPoints = selected
     ? engineRef.current?.deformationPoints(selected) || []
     : [];
-  const effect = EFFECTS.find((e) => e.id === settings.effect)!;
   const movedCount = telemetry.elements.filter(
     (e) => Math.hypot(e.dx, e.dy) > 1 || e.warp > 0,
   ).length;
@@ -603,7 +466,10 @@ export default function App() {
               <br className="mobile-break" /> 새로운 포스터를 만드세요
               <span className="orange">.</span>
             </h1>
-            <p>흔드는 순간, 익숙한 디자인이 예상하지 못한 형태가 됩니다.</p>
+            <p>
+              덜 마른 점토처럼 흐르고 부딪히는 포스터. 노트북의 움직임이 소리가
+              됩니다.
+            </p>
           </div>
           <div className="intro-mark">
             <span>
@@ -861,7 +727,7 @@ export default function App() {
                 <span className="original-pill">원본 미리보기</span>
               )}
               <div className="stage-bottomline">
-                <span>↳ DRAG TO DISRUPT</span>
+                <span>↳ MOTION BECOMES SOUND</span>
                 <span>
                   <Focus size={12} />
                   FIT <span className="zoom-value">{zoom}%</span>
@@ -886,10 +752,8 @@ export default function App() {
               <div className="gesture-hint">
                 <MousePointer2 size={17} strokeWidth={1.5} />
                 <span>
-                  드래그해서 흔들기
-                  <small>
-                    또는 <kbd>SPACE</kbd> 키를 눌러보세요
-                  </small>
+                  노트북으로 연주하기
+                  <small>오른쪽에서 센서 또는 카메라를 연결하세요</small>
                 </span>
               </div>
               <button
@@ -903,7 +767,7 @@ export default function App() {
                 }
               >
                 <Activity size={18} />
-                흔들어보기
+                입력 테스트
                 <ArrowUpRight size={15} />
               </button>
             </div>
@@ -929,75 +793,162 @@ export default function App() {
             </div>
           </section>
 
-          <aside className="right-panel panel">
+          <aside className="right-panel panel instrument-panel">
             <div className="panel-heading">
               <span>
-                <Settings2 size={15} />
-                물리 실험
+                <Mic2 size={15} />
+                포스터 악기
               </span>
-              <span className="step">02 / DISTORT</span>
+              <span className="step">02 / PERFORM</span>
             </div>
-            <div className="section-label">어떻게 흐트러뜨릴까요?</div>
-            <div className="effect-options">
-              {EFFECTS.map((item) => (
-                <button
-                  key={item.id}
-                  className={`effect-card ${settings.effect === item.id ? 'chosen' : ''}`}
-                  onClick={() => update('effect', item.id)}
-                  aria-pressed={settings.effect === item.id}
-                >
-                  <item.icon size={20} strokeWidth={1.6} />
+            <div className="material-intro">
+              <span className="material-dot" />
+              <div>
+                <strong>DAMP CLAY</strong>
+                <small>중력 · 점성 변형 · 충돌 균열이 함께 반응합니다.</small>
+              </div>
+              <Waves size={24} strokeWidth={1.2} />
+            </div>
+            <p className="instrument-description">
+              작은 움직임은 부드럽게 휘어지고,
+              <br />큰 움직임은 날카롭게 부서집니다.
+            </p>
+            <div className="material-meters" aria-label="실시간 재료 반응">
+              {[
+                {
+                  label: '흐름과 휘어짐',
+                  value: Math.max(
+                    telemetry.deformation,
+                    telemetry.energy * 0.5,
+                  ),
+                },
+                { label: '충돌 압력', value: telemetry.impact },
+                {
+                  label: '균열 · 파편',
+                  value:
+                    telemetry.elements.filter((e) => e.id.includes('.'))
+                      .length / Math.max(1, telemetry.elements.length),
+                },
+              ].map((meter) => (
+                <div key={meter.label}>
                   <span>
-                    {item.label}
-                    <small>{item.english}</small>
+                    {meter.label}
+                    <b>{Math.round(meter.value * 100)}%</b>
                   </span>
-                  {settings.effect === item.id && (
-                    <span className="effect-check">
-                      <Check size={10} strokeWidth={3} />
-                    </span>
-                  )}
-                </button>
+                  <i>
+                    <i
+                      style={{ width: `${Math.min(100, meter.value * 100)}%` }}
+                    />
+                  </i>
+                </div>
               ))}
             </div>
-            <p className="effect-description">{effect.description}</p>
-            <Slider
-              label="흔들기 민감도"
-              value={settings.intensity}
-              onChange={(v) => update('intensity', v)}
-            />
-            <div className="range-ends">
-              <span>섬세하게</span>
-              <span>과감하게</span>
-            </div>
-            <div className="physics-controls">
-              <Slider
-                label="중력"
-                value={settings.gravity}
-                onChange={(v) => update('gravity', v)}
-              />
-              <Slider
-                label="반발력"
-                value={settings.restitution}
-                onChange={(v) => update('restitution', v)}
-              />
-            </div>
+            <div className="input-section-label">노트북 움직임 감지</div>
             <button
-              className={`sensor-button ${sensorEnabled ? 'connected' : ''}`}
-              onClick={() => void connectSensor()}
+              className={`sensor-button ${input.source === 'sensor' && input.status.state === 'connected' ? 'connected' : ''}`}
+              onClick={() => input.startInput('sensor')}
+              disabled={
+                input.source === 'sensor' && input.status.state === 'requesting'
+              }
             >
               <Radio size={15} />
               <span>
-                {sensorConnected
-                  ? '기기 센서 연결됨'
-                  : sensorEnabled
-                    ? '센서 신호 기다리는 중…'
-                    : '기기 움직임 센서 연결'}
+                {input.source === 'sensor' &&
+                input.status.state === 'requesting'
+                  ? '가속도 실측 확인 중…'
+                  : '가속도 센서로 연주'}
               </span>
-              {sensorEnabled ? (
-                <span className="status-dot" />
-              ) : (
-                <ArrowUpRight size={13} />
+              <ArrowUpRight size={13} />
+            </button>
+            <button
+              className={`sensor-button camera-button ${input.source === 'camera' && input.status.state === 'connected' ? 'connected' : ''}`}
+              onClick={() => input.startInput('camera')}
+              disabled={
+                input.source === 'camera' && input.status.state === 'requesting'
+              }
+            >
+              <Camera size={15} />
+              <span>카메라로 움직임 감지</span>
+              <ArrowUpRight size={13} />
+            </button>
+            <div
+              className={`motion-status ${input.status.state}`}
+              role="status"
+              data-testid="motion-status"
+            >
+              <span className="status-dot" />
+              <span>{input.status.message}</span>
+            </div>
+            <div
+              className={`camera-preview ${input.source === 'camera' && ['connected', 'requesting'].includes(input.status.state) ? 'visible' : ''}`}
+            >
+              <video
+                ref={input.videoRef}
+                muted
+                playsInline
+                aria-label="움직임 분석용 카메라 미리보기"
+              />
+              <span>LOCAL ONLY · 영상 저장·전송 없음</span>
+            </div>
+            {input.source &&
+              ['connected', 'requesting', 'stale'].includes(
+                input.status.state,
+              ) && (
+                <button className="stop-input" onClick={input.stopInput}>
+                  <Square size={10} fill="currentColor" />
+                  움직임 감지 중지
+                </button>
               )}
+            <div className="input-reading" data-testid="motion-reading">
+              <span>
+                {input.sample?.source === 'camera'
+                  ? 'CAMERA ESTIMATE'
+                  : input.sample?.source === 'sensor'
+                    ? 'ACCELERATION'
+                    : input.sample?.source === 'test'
+                      ? 'TEST INPUT'
+                      : 'WAITING FOR MOTION'}
+              </span>
+              <strong>
+                {fmt(input.sample?.magnitude || 0, 2)}
+                <small>
+                  {input.sample?.source === 'sensor'
+                    ? 'm/s²'
+                    : input.sample?.source === 'camera'
+                      ? 'px/s'
+                      : ''}
+                </small>
+              </strong>
+              {input.sample?.source === 'camera' && (
+                <span>
+                  추적 신뢰도 {Math.round(input.sample.confidence * 100)}%
+                </span>
+              )}
+            </div>
+            <p className="motion-method-note">
+              M1 맥북에서 가속도 값이 제공되지 않으면 카메라 방식을 사용하세요.
+              카메라는 정지한 배경의 상대 이동을 추정하며, 사람이나 배경의
+              움직임을 오인할 수 있습니다.
+            </p>
+            <button
+              className={`sound-toggle ${input.sound === 'running' ? 'enabled' : ''}`}
+              onClick={input.toggleSound}
+              aria-pressed={input.sound === 'running'}
+            >
+              {input.sound === 'running' ? (
+                <Volume2 size={16} />
+              ) : (
+                <VolumeX size={16} />
+              )}
+              <span>
+                {input.sound === 'running'
+                  ? '연주 소리 켜짐'
+                  : input.sound === 'muted'
+                    ? '연주 소리 꺼짐'
+                    : '연주 소리 시작'}
+                <small>부드러운 저음 → 날카로운 배음</small>
+              </span>
+              <span className="sound-wave">∿∿∿</span>
             </button>
             <div className="section-divider" />
             <div className="panel-heading">
@@ -1072,8 +1023,11 @@ export default function App() {
                     </span>
                   </div>
                   <div className="coordinate-meta">
-                    <span>회전 {fmt(selectedData.rotation)}°</span>
-                    <span>왜곡 ±{fmt(selectedData.warp)}px</span>
+                    <span>
+                      눌림 {fmt(selectedData.compression * 100, 0)}% ·{' '}
+                      {fmt(selectedData.rotation)}°
+                    </span>
+                    <span>변형 ±{fmt(selectedData.warp)}px</span>
                   </div>
                   <details className="vertex-details">
                     <summary>
@@ -1298,11 +1252,13 @@ export default function App() {
                 <div className="guide-step">
                   <span>02</span>
                   <div>
-                    <h3>효과를 고르고 흔들어보세요</h3>
+                    <h3>노트북의 움직임으로 연주하세요</h3>
                     <p>
-                      캔버스를 빠르게 드래그하거나 Space 키, 흔들기 버튼을
-                      사용하세요. 민감도가 높고 흔들림이 강할수록 변화가
-                      커집니다. 효과를 바꾸어 겹쳐 적용할 수도 있어요.
+                      가속도 센서 또는 카메라를 연결하세요. 약하게 움직이면
+                      요소가 점토처럼 휘고 눌리며, 강하게 움직이면 충돌한 요소가
+                      부서집니다. 중력·변형·균열은 항상 함께 작용하고, 소리의
+                      음색도 움직임의 강도에 따라 변합니다. 입력 테스트 버튼과
+                      드래그, Space는 별도의 테스트 입력입니다.
                     </p>
                   </div>
                 </div>
@@ -1330,10 +1286,14 @@ export default function App() {
                 <div className="guide-note">
                   <Radio size={17} />
                   <p>
-                    <strong>노트북을 실제로 흔들고 싶다면</strong>기기 움직임
-                    센서 연결을 눌러주세요. 센서가 있고 브라우저에서 제공되는
-                    기기에서 사용할 수 있으며, HTTPS 또는 localhost 연결이
-                    필요합니다. 일반 노트북은 센서가 제공되지 않을 수 있어요.
+                    <strong>실측 센서와 카메라 추정을 구분합니다</strong>실제
+                    가속도 데이터가 수신되어야 센서 연결 완료로 표시됩니다. M1
+                    MacBook Pro를 포함한 많은 노트북은 브라우저에 가속도 값을
+                    제공하지 않습니다. 이때 내장 카메라로 배경의 상대 이동을
+                    분석할 수 있습니다. 정지한 배경과 충분한 조명이 필요하며,
+                    사람이 움직이거나 배경이 바뀌면 오인할 수 있습니다. 카메라
+                    영상은 기기 안에서만 분석하고 저장하거나 전송하지 않습니다.
+                    감지를 중지하거나 탭을 떠나면 카메라를 해제합니다.
                   </p>
                 </div>
                 <div className="guide-note">

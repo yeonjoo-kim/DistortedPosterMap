@@ -943,161 +943,6 @@ kbd {
   color: #8e9782;
   margin: 0 0 11px;
 }
-.effect-options {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 7px;
-}
-.effect-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 15px 2px 12px;
-  border: 1px solid #e6e9e0;
-  border-radius: 5px;
-  color: #8a927f;
-  transition: all 0.15s;
-}
-.effect-card > span:not(.effect-check) {
-  font-size: 9px;
-  font-weight: 550;
-  line-height: 1;
-  white-space: nowrap;
-}
-.effect-card small {
-  display: block;
-  font-family: var(--mono);
-  font-size: 6px;
-  letter-spacing: 0.8px;
-  font-weight: 400;
-  color: #a9b19e;
-  margin-top: 7px;
-}
-.effect-card:hover {
-  border-color: #e7ad8f;
-  background: #fffbf6;
-}
-.effect-card.chosen {
-  background: #fff3e9;
-  border-color: #ef926c;
-  color: #d85c32;
-  box-shadow: 0 0 0 0.5px #ef926c10;
-}
-.effect-card.chosen small {
-  color: #cf9378;
-}
-.effect-check {
-  position: absolute;
-  right: 5px;
-  top: 5px;
-  height: 12px;
-  width: 12px;
-  background: var(--orange);
-  border-radius: 50%;
-  color: white;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-.effect-description {
-  font-size: 8px;
-  line-height: 1.8;
-  color: #9da58f;
-  min-height: 27px;
-  margin: 10px 0 20px;
-}
-.slider-control {
-  display: block;
-}
-.control-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 10px;
-  font-weight: 500;
-  color: #717a65;
-  margin-bottom: 12px;
-}
-.value-tag {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 450;
-  border: 1px solid #e3e8d9;
-  border-radius: 4px;
-  min-width: 43px;
-  text-align: center;
-  padding: 4px 6px;
-  line-height: 1;
-  background: #fafcf5;
-  color: #7b895f;
-}
-.value-tag small {
-  font-size: 7px;
-  color: #acb697;
-  margin-left: 2px;
-}
-input[type='range'] {
-  display: block;
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 3px;
-  background: linear-gradient(
-    to right,
-    #9aa887 var(--range),
-    #edf0e7 var(--range)
-  );
-  border-radius: 3px;
-  cursor: pointer;
-  margin: 0;
-  outline-offset: 7px;
-}
-input[type='range']::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 11px;
-  height: 11px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  background: #7f9167;
-  box-shadow:
-    0 0 0 1px #a2af92,
-    0 1px 3px #526f3420;
-}
-input[type='range']::-moz-range-thumb {
-  width: 8px;
-  height: 8px;
-  border: 2px solid #fff;
-  border-radius: 50%;
-  background: #7f9167;
-  box-shadow: 0 0 0 1px #a2af92;
-}
-.range-ends {
-  display: flex;
-  justify-content: space-between;
-  font-size: 7px;
-  color: #abb49c;
-  margin-top: 10px;
-}
-.physics-controls {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 17px;
-  margin-top: 24px;
-}
-.physics-controls .control-label {
-  font-size: 9px;
-}
-.physics-controls .value-tag {
-  min-width: 35px;
-  font-size: 8px;
-  padding: 4px;
-}
-.physics-controls .value-tag small {
-  font-size: 6px;
-}
 .sensor-button {
   display: flex;
   align-items: center;
@@ -1626,16 +1471,6 @@ input[type='range']::-moz-range-thumb {
   .right-panel .section-divider {
     margin: 27px 0;
   }
-  .effect-card {
-    padding-top: 18px;
-    padding-bottom: 16px;
-  }
-  .effect-description {
-    margin-bottom: 26px;
-  }
-  .physics-controls {
-    margin-top: 29px;
-  }
   .sensor-button {
     margin-top: 27px;
   }
@@ -1759,21 +1594,6 @@ input[type='range']::-moz-range-thumb {
   .right-panel > .section-label {
     grid-column: 1;
   }
-  .right-panel > .effect-options {
-    grid-column: 1;
-  }
-  .right-panel > .effect-description {
-    grid-column: 1;
-  }
-  .right-panel > .slider-control {
-    grid-column: 1;
-  }
-  .right-panel > .range-ends {
-    grid-column: 1;
-  }
-  .right-panel > .physics-controls {
-    grid-column: 1;
-  }
   .right-panel > .sensor-button {
     grid-column: 1;
   }
@@ -1844,9 +1664,6 @@ input[type='range']::-moz-range-thumb {
   }
   .page-footer {
     padding: 20px 0;
-  }
-  .effect-options {
-    max-width: 320px;
   }
   .layer-list {
     height: 346px;
@@ -2107,36 +1924,8 @@ input[type='range']::-moz-range-thumb {
   .right-panel > .coordinate-card {
     margin-top: 19px;
   }
-  .effect-options {
-    max-width: none;
-    gap: 9px;
-  }
-  .effect-card {
-    padding-top: 17px;
-    padding-bottom: 14px;
-  }
-  .effect-card > span:not(.effect-check) {
-    font-size: 10px;
-  }
-  .effect-card small {
-    font-size: 7px;
-  }
-  .effect-description {
-    font-size: 9px;
-    min-height: 0;
-    margin-bottom: 21px;
-  }
   .section-label {
     font-size: 10px;
-  }
-  .control-label {
-    font-size: 11px;
-  }
-  .physics-controls .control-label {
-    font-size: 10px;
-  }
-  .range-ends {
-    font-size: 8px;
   }
   .sensor-button {
     font-size: 10px;
@@ -2311,5 +2100,304 @@ input[type='range']::-moz-range-thumb {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+.instrument-panel {
+  display: block;
+  max-height: 850px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #d8dece transparent;
+}
+.material-intro {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #e7e9dd;
+  background: #f6f7ee;
+  border-radius: 6px;
+  padding: 12px 10px;
+}
+.material-dot {
+  height: 25px;
+  width: 25px;
+  background: #ed552f;
+  border-radius: 40% 60% 52% 48%;
+  box-shadow: inset -4px -4px 0 #cb4d2f22;
+  flex-shrink: 0;
+}
+.material-intro > div {
+  flex: 1;
+}
+.material-intro strong {
+  display: block;
+  font: 10px var(--mono);
+  letter-spacing: 1px;
+  color: #647153;
+}
+.material-intro small {
+  display: block;
+  font-size: 7px;
+  color: #9ba68b;
+  margin-top: 5px;
+  line-height: 1.6;
+}
+.material-intro > svg {
+  color: #a1ae8d;
+}
+.instrument-description {
+  font-size: 10px;
+  line-height: 1.9;
+  color: #8f9b7f;
+  margin: 13px 0 16px;
+}
+.material-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  margin-bottom: 20px;
+}
+.material-meters > div > span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #8d9b7c;
+  margin-bottom: 6px;
+}
+.material-meters b {
+  font: 8px var(--mono);
+  font-weight: 400;
+  color: #a2ad93;
+}
+.material-meters > div > i {
+  display: block;
+  height: 3px;
+  background: #edf0e4;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.material-meters > div > i > i {
+  display: block;
+  height: 100%;
+  background: #d69769;
+  transition: width 0.12s linear;
+}
+.material-meters > div:nth-child(2) > i > i {
+  background: #a5b58b;
+}
+.material-meters > div:nth-child(3) > i > i {
+  background: #ed552f;
+}
+.input-section-label {
+  font-size: 9px;
+  color: #7b8c67;
+  font-weight: 550;
+  margin-bottom: 9px;
+}
+.instrument-panel .sensor-button {
+  margin-top: 7px;
+  height: 35px;
+}
+.camera-button {
+  background: #f1f5e6;
+  border-color: #dce4cd;
+  color: #788c5b;
+}
+.camera-button:hover {
+  background: #e8f0d8;
+}
+.motion-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: #9aa68c;
+  font-size: 8px;
+  line-height: 1.8;
+  margin: 11px 0;
+}
+.motion-status .status-dot {
+  margin-top: 5px;
+  background: #b4bdab;
+}
+.motion-status.connected .status-dot {
+  background: #84a266;
+}
+.motion-status.unavailable,
+.motion-status.denied,
+.motion-status.stale {
+  color: #ba8c69;
+}
+.motion-status.unavailable .status-dot,
+.motion-status.denied .status-dot,
+.motion-status.stale .status-dot {
+  background: #d2a17a;
+}
+.camera-preview {
+  display: none;
+  position: relative;
+  width: 100%;
+  height: 104px;
+  background: #2b302a;
+  border-radius: 5px;
+  overflow: hidden;
+  margin: 11px 0;
+}
+.camera-preview.visible {
+  display: block;
+}
+.camera-preview video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+.camera-preview > span {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #293321c2;
+  padding: 5px 7px;
+  color: #e3ebd8;
+  font: 6px var(--mono);
+  letter-spacing: 0.4px;
+  text-align: center;
+}
+.stop-input {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 8px;
+  color: #9aa88b;
+  padding: 4px 0 9px;
+  width: 100%;
+}
+.stop-input:hover {
+  color: #d36c42;
+}
+.input-reading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  border: 1px solid #e7ecd9;
+  background: #fafcf4;
+  border-radius: 4px;
+  padding: 9px;
+  margin: 10px 0;
+}
+.input-reading > span {
+  font: 6px var(--mono);
+  letter-spacing: 0.4px;
+  color: #a3ae93;
+}
+.input-reading > span:last-child:not(:first-child) {
+  width: 100%;
+  font-family: inherit;
+  font-size: 7px;
+}
+.input-reading strong {
+  font: 14px var(--mono);
+  font-weight: 450;
+  color: #7f9167;
+}
+.input-reading small {
+  font-size: 7px;
+  color: #a4b68c;
+  margin-left: 5px;
+}
+.motion-method-note {
+  font-size: 8px;
+  line-height: 1.9;
+  color: #a6b095;
+  margin: 11px 0 14px;
+}
+.sound-toggle {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  width: 100%;
+  padding: 11px 9px;
+  border: 1px solid #e4e9d7;
+  background: #fafbf6;
+  border-radius: 5px;
+  color: #9da98b;
+  text-align: left;
+}
+.sound-toggle > span:first-of-type {
+  flex: 1;
+  font-size: 9px;
+}
+.sound-toggle small {
+  display: block;
+  font-size: 7px;
+  margin-top: 4px;
+  color: #a9b49a;
+}
+.sound-toggle.enabled {
+  background: #fff4e9;
+  border-color: #f0d1b4;
+  color: #c87b49;
+}
+.sound-toggle.enabled small {
+  color: #c1a07e;
+}
+.sound-wave {
+  font-size: 19px;
+  letter-spacing: -3px;
+  font-family: var(--mono);
+  padding-right: 3px;
+}
+@media (max-width: 650px) {
+  .instrument-panel {
+    max-height: none;
+    overflow: visible;
+  }
+  .material-intro small {
+    font-size: 9px;
+  }
+  .material-intro strong {
+    font-size: 12px;
+  }
+  .instrument-description {
+    font-size: 11px;
+  }
+  .material-meters > div > span {
+    font-size: 10px;
+  }
+  .input-section-label {
+    font-size: 11px;
+  }
+  .instrument-panel .sensor-button {
+    height: 40px;
+    font-size: 11px;
+  }
+  .motion-status {
+    font-size: 10px;
+  }
+  .motion-method-note {
+    font-size: 9px;
+  }
+  .input-reading > span {
+    font-size: 8px;
+  }
+  .input-reading strong {
+    font-size: 18px;
+  }
+  .sound-toggle > span:first-of-type {
+    font-size: 11px;
+  }
+  .sound-toggle small {
+    font-size: 8px;
+  }
+  .camera-preview {
+    height: 150px;
+  }
+  .stop-input {
+    font-size: 10px;
   }
 }
