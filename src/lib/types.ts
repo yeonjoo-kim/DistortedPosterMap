@@ -24,6 +24,7 @@ export interface PosterAsset {
 }
 export interface Settings {
   showPaths: boolean;
+  blackPaths: boolean;
   showLabels: boolean;
   paused: boolean;
   original: boolean;
@@ -60,6 +61,7 @@ export interface Telemetry {
 }
 export const DEFAULT_SETTINGS: Settings = {
   showPaths: true,
+  blackPaths: false,
   showLabels: true,
   paused: false,
   original: false,

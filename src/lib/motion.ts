@@ -3,11 +3,12 @@ import type { Point } from './types';
 import type { BodyObservation } from './body';
 
 // Normalized landmark speed (body) or measured acceleration (device sensor).
-export const FRACTURE_SPEED_THRESHOLD = 0.75;
+export const FRACTURE_SPEED_THRESHOLD = 0.92;
 
 export type MotionSource = 'sensor' | 'camera' | 'body' | 'test';
 export interface MotionSample {
   strength: number;
+  fractureStrength?: number;
   direction: Point;
   source: MotionSource;
   magnitude: number;

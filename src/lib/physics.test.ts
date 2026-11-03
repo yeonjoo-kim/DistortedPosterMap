@@ -96,7 +96,7 @@ describe('physical workflow', () => {
     physics.dispose();
   });
   it('never fractures repeated sub-threshold input, even at high collision speeds', () => {
-    for (const strength of [0.2, 0.6, 0.75]) {
+    for (const strength of [0.2, 0.6, 0.75, 0.92]) {
       const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
       for (let i = 0; i < 300; i++) {
         physics.shake(strength, { x: 1, y: 1 });
@@ -126,6 +126,27 @@ describe('physical workflow', () => {
     Matter.Body.setPosition(physics.entities[0].body, { x: 200, y: 582 });
     Matter.Body.setVelocity(physics.entities[0].body, { x: 0, y: 20 });
     physics.update(1000);
+    expect(physics.completedTrails).toHaveLength(0);
+    physics.dispose();
+  });
+  it('rejects isolated spikes and brief repeated fast gestures', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    for (let i = 0; i < 60; i++) {
+      for (let j = 0; j < 12; j++) { physics.shake(1); physics.update(16); }
+      physics.shake(0.2); physics.update(16);
+    }
+    expect(physics.completedTrails).toHaveLength(0);
+    expect(physics.entities[0].damage).toBe(0);
+    physics.dispose();
+  });
+  it('moves from fine nodes without letting them arm fracture', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    for (let i = 0; i < 200; i++) {
+      physics.applyMotion({ source: 'body', strength: 1, fractureStrength: 0, magnitude: 5,
+        confidence: 1, direction: { x: 1, y: 1 } });
+      physics.update(16);
+    }
+    expect(physics.active).toBe(true);
     expect(physics.completedTrails).toHaveLength(0);
     physics.dispose();
   });

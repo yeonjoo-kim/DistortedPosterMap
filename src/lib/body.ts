@@ -356,10 +356,13 @@ export function bodyMotion(
   }
   const detected = readings.filter((r) => r.detected).length;
   const strength = bestStrength < 0.08 ? 0 : bestStrength;
+  const fractureStrength = Math.max(0, ...readings.filter((r) =>
+    ['Head', 'Torso', 'Arms', 'Legs', 'Hands'].includes(r.part)).map((r) => r.strength));
   const length = Math.hypot(direction.x, direction.y);
   return {
     source: 'body',
     strength,
+    fractureStrength,
     magnitude: Math.max(0, ...readings.map((r) => r.speed)),
     confidence: detected ? 1 : 0,
     direction:
@@ -369,7 +372,7 @@ export function bodyMotion(
     body: {
       parts: readings,
       dominant: strength ? dominant : null,
-      effect: motionEffect(strength),
+      effect: fractureStrength > FRACTURE_SPEED_THRESHOLD ? 'BREAK' : motionEffect(Math.min(strength, FRACTURE_SPEED_THRESHOLD)),
       nodes: [...nodes.values()].map((node) => ({
         ...node,
         strength: readings.find((r) => r.part === node.part)!.strength,

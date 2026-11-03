@@ -79,8 +79,9 @@ export async function startBodyCamera(
       audio: false,
       video: {
         facingMode: 'user',
-        width: { ideal: 640 },
-        height: { ideal: 480 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        aspectRatio: { ideal: 16 / 9 },
         frameRate: { ideal: 24, max: 30 },
       },
     });

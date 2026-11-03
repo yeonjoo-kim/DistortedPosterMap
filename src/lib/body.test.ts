@@ -122,6 +122,10 @@ describe('body, face and hand node measurements', () => {
     nose.face[2].x += 0.015;
     expect(bodyMotion(frame, wave, 0.1).body?.dominant).toBe('Hands');
     expect(bodyMotion(frame, fingers, 0.1).body?.dominant).toBe('Fingers');
+    const fine = bodyMotion(frame, fingers, 0.1);
+    expect(fine.strength).toBeGreaterThan(0.92);
+    expect(fine.fractureStrength).toBe(0);
+    expect(fine.body?.effect).toBe('BEND');
     expect(bodyMotion(frame, mouth, 0.1).body?.dominant).toBe('Mouth');
     expect(bodyMotion(frame, eyes, 0.1).body?.dominant).toBe('Eyes');
     expect(bodyMotion(frame, nose, 0.1).body?.dominant).toBe('Nose');
@@ -131,7 +135,7 @@ describe('body, face and hand node measurements', () => {
       next = person();
     next.pose[15].x += 0.4;
     expect(bodyMotion(frame, next, 2).strength).toBe(0);
-    expect([0.07, 0.08, 0.34, 0.35, 0.75, 0.76].map(motionEffect)).toEqual([
+    expect([0.07, 0.08, 0.34, 0.35, 0.92, 0.93].map(motionEffect)).toEqual([
       'REST',
       'MOVE',
       'MOVE',

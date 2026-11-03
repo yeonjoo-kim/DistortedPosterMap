@@ -92,10 +92,22 @@ try {
   assert.equal(await page.evaluate(() => window.__constraints.audio), false);
   assert.equal(await page.locator('.studio.is-distorting').count(), 0);
   if (!production) { const initial = await map(page); assert(Math.abs(initial.width - 340) <= 1); assert(Math.abs(initial.height - 480) <= 1); assert(initial.elements.every((e) => e.dx === 0 && e.dy === 0)); }
-  assert(!(await page.locator('.input-heading').innerText()).match(/Body nodes|Choose an input/i));
+  assert.equal(await page.locator('.input-heading,.coordinate-grid,.coordinate').count(), 0);
   record('Free-ratio crop applied; desktop automatically starts body tracking and holds the complete poster still');
   assert.equal(await page.locator('.input-meter,.response-scale,.output-count').count(), 0);
   assert.equal(await page.getByRole('button', { name: /Expand tracking/ }).count(), 0);
+  const controls = page.getByRole('region', { name: 'Poster panel', exact: true });
+  assert.deepEqual(await controls.locator('.round-toggle').allTextContents(), ['node', 'data', 'black']);
+  assert.equal(await page.locator('.input-preview button').count(), 0);
+  const offStyle = await controls.getByRole('button', { name: 'Black paths', exact: true }).evaluate((el) => {
+    const s = getComputedStyle(el); return { opacity: s.opacity, radius: s.borderRadius, width: el.offsetWidth, height: el.offsetHeight };
+  });
+  assert.equal(offStyle.opacity, '0.3'); assert.equal(offStyle.radius, '50%'); assert.equal(offStyle.width, offStyle.height);
+  const videoBox = await page.locator('.video-window').boundingBox();
+  assert(Math.abs(videoBox.width / videoBox.height - 16 / 9) < .01);
+  assert.equal(await page.locator('.node-overlay').getAttribute('preserveAspectRatio'), 'xMidYMid meet');
+  await click(page, 'Black paths');
+  assert.equal(await controls.getByRole('button', { name: 'Black paths', exact: true }).getAttribute('aria-pressed'), 'true');
   await click(page, 'Show body nodes'); assert.equal(await page.locator('.node-overlay').count(), 0);
   await click(page, 'Show body nodes'); assert.equal(await page.locator('.node-overlay').count(), 1);
   await click(page, 'Show motion readings'); assert.equal(await page.locator('.part-presence,.causal-readout').count(), 0);
@@ -106,13 +118,13 @@ try {
   assert(cameraBefore.y + cameraBefore.height < panelBefore.y);
   await page.screenshot({ path: 'test-results/updated-desktop-still.png' });
   await page.mouse.move(5, 5);
-  await page.evaluate(() => { window.__amplitude = .08; });
+  await page.evaluate(() => { window.__amplitude = .12; });
   await page.waitForFunction(() => document.querySelector('.studio.is-distorting'));
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(1200);
   await page.evaluate(() => { window.__amplitude = 0; });
   const cameraAfter = await preview.boundingBox(), restartAfter = await page.getByRole('button', { name: 'Upload poster', exact: true }).boundingBox();
   assert(Math.hypot(cameraAfter.x - cameraBefore.x, cameraAfter.y - cameraBefore.y) > 2);
-  assert(Math.hypot(restartAfter.x - restartBefore.x, restartAfter.y - restartBefore.y) > 2);
+  assert(Math.hypot(restartAfter.x - restartBefore.x, restartAfter.y - restartBefore.y) > 2, JSON.stringify({ restartBefore, restartAfter }));
   record('Motion moves poster pieces, camera preview and the + button; node and data toggles work');
   await click(page, 'Pause motion'); await page.waitForTimeout(100);
   if (!production) { const before = await map(page); await page.waitForTimeout(300); const after = await map(page); assert.deepEqual(before.elements, after.elements); }
@@ -152,23 +164,25 @@ try {
       const slowCount = engine.entities.length;
       const noSlowBreaks = engine.completedTrails.length === 0 && slowCount === asset.elements.length;
       let firstCount = 0, recursive = false;
-      for (let i = 0; i < 360; i++) { engine.shake(.95, { x: Math.cos(i), y: Math.sin(i) }); engine.update(16); if (i === 45) firstCount = engine.entities.length; }
+      for (let i = 0; i < 1600; i++) { engine.shake(1, { x: Math.cos(i), y: Math.sin(i) }); engine.update(16); if (i === 120) firstCount = engine.entities.length; }
       recursive = engine.entities.some((e) => e.element.id.split('.').length >= 3);
       const count = engine.entities.length, sum = engine.entities.reduce((s,e) => s+e.areaWeight, 0);
       const finite = engine.mapData().elements.every((e) => e.sourceVertices.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)));
       const gravity = engine.engine.gravity.y;
       // A trail and its annotation must be painted before any foreground sprites.
+      engine.settings.blackPaths = true;
+      const strokeColors = [];
       let trailsPainted = false, pathUnderPieces = true;
       const renderCanvas = document.createElement('canvas'), render = renderCanvas.getContext('2d');
       const drawImage = render.drawImage.bind(render), stroke = render.stroke.bind(render);
-      render.stroke = (...args) => { trailsPainted = true; return stroke(...args); };
+      render.stroke = (...args) => { trailsPainted = true; strokeColors.push(render.strokeStyle); return stroke(...args); };
       render.drawImage = (...args) => { if (!trailsPainted) pathUnderPieces = false; return drawImage(...args); };
       engine.render(render, true); engine.dispose();
-      return { difference, blank, noSlowBreaks, firstCount, count, recursive, sum, finite, gravity, pathUnderPieces };
+      return { blackStrokes: strokeColors.length > 0 && strokeColors.every((color) => color === '#000000'), difference, blank, noSlowBreaks, firstCount, count, recursive, sum, finite, gravity, pathUnderPieces };
     });
     assert.equal(physics.difference, 0); assert(physics.blank); assert(physics.noSlowBreaks); assert(physics.recursive);
     assert(physics.count > physics.firstCount); assert(Math.abs(physics.sum - 240 * 240) < .01);
-    assert(physics.finite); assert.equal(physics.gravity, 0); assert(physics.pathUnderPieces);
+    assert(physics.finite); assert.equal(physics.gravity, 0); assert(physics.pathUnderPieces); assert(physics.blackStrokes);
     record('All pixels reconstructed exactly; no fixed background remains; fragments split again with conserved area, zero gravity and paths underneath');
   }
   // Narrow touch devices offer exactly the two requested modes at startup.

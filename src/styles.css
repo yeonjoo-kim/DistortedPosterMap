@@ -770,3 +770,29 @@ button {
 .input-preview .video-window { max-height: max(64px, calc(100dvh - 550px)); }
 
 .input-preview[data-source='sensor'] .video-window { display: none; }
+
+/* Fixed landscape camera frame; contain keeps the complete performer visible. */
+.video-window { aspect-ratio: 16 / 9; }
+.input-preview .video-window { max-height: none; }
+.node-overlay { height: 100%; }
+.studio { --panel-bottom: 32px; }
+.mapping-panel { bottom: var(--panel-bottom); }
+.input-preview:not(.expanded) {
+  bottom: calc(var(--panel-bottom) + var(--panel-height, 190px) + 12px);
+}
+.panel-toggles { display: flex; justify-content: space-between; gap: 12px; margin: 14px 0 2px; }
+.round-toggle {
+  display: grid; place-items: center; flex: 0 0 62px;
+  width: 62px; height: 62px; padding: 0; border-radius: 50%;
+  background: #b7ee87; color: #496c35; font-size: 18px;
+  opacity: 1;
+}
+.round-toggle[aria-pressed='false'] { opacity: 0.3; }
+@media (max-width: 900px) {
+  .studio { --panel-bottom: 18px; }
+  .round-toggle { flex-basis: 54px; width: 54px; height: 54px; font-size: 16px; }
+}
+@media (max-height: 720px) and (min-width: 901px) {
+  .studio { --panel-bottom: 20px; }
+  .round-toggle { flex-basis: 54px; width: 54px; height: 54px; }
+}

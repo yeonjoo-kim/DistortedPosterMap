@@ -45,7 +45,7 @@ export default function App() {
     [menu, setMenu] = useState<'motion' | 'download' | null>(null);
   const [menuPosition, setMenuPosition] = useState({ left: 12, top: 12 }),
     [dropActive, setDropActive] = useState(false),
-    [videoRatio, setVideoRatio] = useState(4 / 3);
+    [videoRatio, setVideoRatio] = useState(16 / 9);
   const [pendingPoster, setPendingPoster] = useState<{ asset: PosterAsset; name: string } | null>(null);
   const previewRef = useRef<HTMLElement>(null), uploadRef = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null),
@@ -105,6 +105,7 @@ export default function App() {
     const canvas = canvasRef.current,
       ctx = canvas.getContext('2d')!;
     const layout = () => {
+      panelRef.current?.parentElement?.style.setProperty('--panel-height', `${panelRef.current.offsetHeight}px`);
       const paper = paperRef.current!.getBoundingClientRect(),
         ratio = Math.min(devicePixelRatio || 1, 2),
         scale = paper.width / asset.width;
@@ -143,9 +144,10 @@ export default function App() {
     layout();
     window.addEventListener('resize', layout);
     // Status, toggles and the alternate font can resize controls during a performance.
-    const fixtureObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const node = entry.target as HTMLElement;
+    const fixtureObserver = new ResizeObserver(() => {
+      panelRef.current?.parentElement?.style.setProperty('--panel-height', `${panelRef.current.offsetHeight}px`);
+      for (const node of [panelRef.current, previewRef.current]) {
+        if (!node) continue;
         const transform = node.style.transform;
         node.style.transform = '';
         const box = node.getBoundingClientRect(), { left, top, scale } = projection.current;
@@ -371,13 +373,6 @@ export default function App() {
       event.currentTarget.releasePointerCapture(event.pointerId);
     holdPanel();
   }
-  const area =
-    telemetry.elements.reduce((sum, e) => sum + e.areaWeight, 0) || 1;
-  const values = (['x', 'y', 'dx', 'dy'] as const).map(
-    (key) =>
-      telemetry.elements.reduce((sum, e) => sum + e[key] * e.areaWeight, 0) /
-      area,
-  );
   const connected = input.status.state === 'connected',
     strength = input.sample?.strength ?? 0,
     percent = Math.round(strength * 100);
@@ -502,13 +497,7 @@ export default function App() {
             data-testid="motion-status"
             data-state={input.status.state}
           >
-            <div className="input-heading">
-              <div className="preview-toggles">
-                <button aria-label="Show body nodes" aria-pressed={showNodes} onClick={() => setShowNodes(!showNodes)}>Nodes {showNodes ? 'ON' : 'OFF'}</button>
-                <button aria-label="Show motion readings" aria-pressed={showReadings} onClick={() => setShowReadings(!showReadings)}>Data {showReadings ? 'ON' : 'OFF'}</button>
-              </div>
-            </div>
-            <div className="video-window" style={{ aspectRatio: videoRatio }}>
+            <div className="video-window">
               <video
                 ref={input.videoRef}
                 autoPlay
@@ -531,8 +520,8 @@ export default function App() {
               {showNodes && input.source === 'body' && body && (
                 <svg
                   className="node-overlay"
-                  viewBox="0 0 1 1"
-                  preserveAspectRatio="none"
+                  viewBox={`0 0 ${videoRatio} 1`}
+                  preserveAspectRatio="xMidYMid meet"
                   aria-label="Tracked body nodes"
                 >
                   {BODY_LINKS.map(([a, b]) => {
@@ -541,9 +530,9 @@ export default function App() {
                     return first && second ? (
                       <line
                         key={`${a}-${b}`}
-                        x1={1 - first.x}
+                        x1={(1 - first.x) * videoRatio}
                         y1={first.y}
-                        x2={1 - second.x}
+                        x2={(1 - second.x) * videoRatio}
                         y2={second.y}
                         stroke={PART_COLORS[first.part]}
                       />
@@ -553,7 +542,7 @@ export default function App() {
                     <circle
                       key={node.id}
                       data-part={node.part}
-                      cx={1 - node.x}
+                      cx={(1 - node.x) * videoRatio}
                       cy={node.y}
                       r={node.strength > 0.35 ? 0.007 : 0.0045}
                       fill={PART_COLORS[node.part]}
@@ -674,7 +663,7 @@ export default function App() {
                 }}
               >
                 <Grip size={16} aria-hidden="true" />
-                Poster map · px
+                Poster map
               </button>
               <button
                 className="mapping-toggle"
@@ -692,18 +681,10 @@ export default function App() {
                 {settings.showPaths ? 'ON' : 'OFF'}
               </button>
             </div>
-            <div className="coordinate-grid">
-              {['Position X', 'Position Y', 'Offset X', 'Offset Y'].map(
-                (label, i) => (
-                  <div className="coordinate" key={label}>
-                    <span>{label}</span>
-                    <output>
-                      {i > 1 && values[i] >= 0.05 ? '+' : ''}
-                      {(Math.abs(values[i]) < 0.05 ? 0 : values[i]).toFixed(1)}
-                    </output>
-                  </div>
-                ),
-              )}
+            <div className="panel-toggles">
+              <button className="round-toggle" aria-label="Show body nodes" aria-pressed={showNodes} onClick={() => setShowNodes(!showNodes)}>node</button>
+              <button className="round-toggle" aria-label="Show motion readings" aria-pressed={showReadings} onClick={() => setShowReadings(!showReadings)}>data</button>
+              <button className="round-toggle" aria-label="Black paths" aria-pressed={settings.blackPaths} onClick={() => setSettings((s) => ({ ...s, blackPaths: !s.blackPaths }))}>black</button>
             </div>
             <div className="control-row">
               <button
