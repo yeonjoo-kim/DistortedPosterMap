@@ -13,6 +13,7 @@ import { CropDialog } from './CropDialog';
 import { extractElements, loadPoster } from './lib/extract';
 import { exportPoster } from './lib/export';
 import { PosterPhysics } from './lib/physics';
+import { FRACTURE_SPEED_THRESHOLD } from './lib/motion';
 import { BODY_LINKS, PART_COLORS } from './lib/body';
 import { DEFAULT_SETTINGS } from './lib/types';
 import type { Point, PosterAsset, Settings, Telemetry } from './lib/types';
@@ -380,14 +381,6 @@ export default function App() {
   const connected = input.status.state === 'connected',
     strength = input.sample?.strength ?? 0,
     percent = Math.round(strength * 100);
-  const sourceName =
-    input.source === 'body'
-      ? 'Body nodes'
-      : input.source === 'camera'
-        ? 'Camera motion'
-        : input.source === 'sensor'
-          ? 'Device sensor'
-          : 'Choose an input';
   const effect =
     input.source === 'body'
       ? (input.sample?.body?.effect ?? 'REST')
@@ -395,7 +388,7 @@ export default function App() {
         ? 'REST'
         : strength < 0.35
           ? 'MOVE'
-          : strength < 0.5
+          : strength <= FRACTURE_SPEED_THRESHOLD
             ? 'BEND'
             : 'BREAK';
   const isSettling =
@@ -510,7 +503,6 @@ export default function App() {
             data-state={input.status.state}
           >
             <div className="input-heading">
-              <span>{sourceName}</span>
               <div className="preview-toggles">
                 <button aria-label="Show body nodes" aria-pressed={showNodes} onClick={() => setShowNodes(!showNodes)}>Nodes {showNodes ? 'ON' : 'OFF'}</button>
                 <button aria-label="Show motion readings" aria-pressed={showReadings} onClick={() => setShowReadings(!showReadings)}>Data {showReadings ? 'ON' : 'OFF'}</button>

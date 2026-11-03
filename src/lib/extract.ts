@@ -22,7 +22,7 @@ export function extractElements(
   sc.drawImage(source, 0, 0, sample.width, sample.height);
   const pixels = sc.getImageData(0, 0, sample.width, sample.height);
   const { regions, labels } = colorRegions(pixels.data, sample.width, sample.height,
-    detail === 'fine' ? 65 : detail === 'coarse' ? 130 : 90);
+    detail === 'fine' ? 16 : detail === 'coarse' ? 6 : 10);
   const elements: PosterElement[] = [];
   // Analyze boundaries at preview resolution, but retain original-resolution colors.
   const original = source.getContext('2d')!.getImageData(0, 0, width, height);
@@ -45,7 +45,7 @@ export function extractElements(
       x: x + w / 2, y: y + h / 2, width: w, height: h });
   }
   return { width, height, source, background: canvas(width, height), color: 'transparent',
-    elements, method: 'Color boundaries + breakable background', pageCount: 1 };
+    elements, method: 'Connected color shapes + breakable background', pageCount: 1 };
 }
 
 export async function loadPoster(

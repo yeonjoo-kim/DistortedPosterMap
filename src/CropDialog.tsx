@@ -25,20 +25,28 @@ export function CropDialog({ source, onApply, onCancel }: {
   return <div className="about-backdrop" onKeyDown={(event) => {
     if (event.key === 'Escape') onCancel();
     if (event.key === 'Tab') {
-      const buttons = [...event.currentTarget.querySelectorAll<HTMLElement>('button, input')];
+      const buttons = [...event.currentTarget.querySelectorAll<HTMLElement>('button, [tabindex="0"]')];
       const first = buttons[0], last = buttons.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
   }}>
     <section role="dialog" aria-modal="true" aria-label="Crop poster" className="crop-dialog">
-      <h1>Crop poster</h1>
-      <p>Drag to select any proportion. Move the selection or drag its corners.</p>
-      <div ref={surface} className="crop-surface" style={{ aspectRatio: source.width / source.height, width: `min(100%, ${52 * source.width / source.height}dvh)` }}
+      <div ref={surface} className="crop-surface" tabIndex={0} role="group" aria-label="Crop selection. Arrow keys move; Shift and arrow keys resize."
+        onKeyDown={(event) => {
+          const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+          if (!direction) return;
+          event.preventDefault();
+          const step = Math.max(1, Math.round(Math.max(source.width, source.height) / 100));
+          setRect((r) => event.shiftKey ? { ...r, width: Math.max(1, Math.min(source.width - r.x, r.width + direction[0] * step)), height: Math.max(1, Math.min(source.height - r.y, r.height + direction[1] * step)) }
+            : { ...r, x: Math.max(0, Math.min(source.width - r.width, r.x + direction[0] * step)), y: Math.max(0, Math.min(source.height - r.height, r.y + direction[1] * step)) });
+        }} style={{ aspectRatio: source.width / source.height, width: `min(100%, ${52 * source.width / source.height}dvh)` }}
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
-          const p = point(event), mode = (event.target as HTMLElement).dataset.crop ?? 'new';
+          const p = point(event);
+          let mode = (event.target as HTMLElement).dataset.crop ?? 'new';
+          if (mode === 'move' && rect.width === source.width && rect.height === source.height) mode = 'new';
           drag.current = { mode, ...p, rect: { ...rect } };
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
@@ -61,17 +69,8 @@ export function CropDialog({ source, onApply, onCancel }: {
           {['nw', 'ne', 'sw', 'se'].map((corner) => <span key={corner} data-crop={corner} className={`crop-handle ${corner}`} />)}
         </div>
       </div>
-      <div className="crop-fields">
-        {(['x', 'y', 'width', 'height'] as const).map((key) => <label key={key}>{key}<input type="number" aria-label={`Crop ${key}`} min={key === 'x' || key === 'y' ? 0 : 1} value={Math.round(rect[key])} onChange={(event) => {
-          const next = { ...rect, [key]: Math.max(0, Number(event.target.value)) };
-          next.x = Math.min(source.width - 1, next.x); next.y = Math.min(source.height - 1, next.y);
-          next.width = Math.max(1, Math.min(source.width - next.x, next.width)); next.height = Math.max(1, Math.min(source.height - next.y, next.height));
-          setRect(next);
-        }} /></label>)}
-      </div>
       <div className="crop-actions">
         <button autoFocus onClick={onCancel}>Cancel</button>
-        <button onClick={() => setRect({ x: 0, y: 0, width: source.width, height: source.height })}>Full image</button>
         <button className="download-button" onClick={apply}>Use crop</button>
       </div>
     </section>

@@ -95,6 +95,40 @@ describe('physical workflow', () => {
     expect(physics.active).toBe(false);
     physics.dispose();
   });
+  it('never fractures repeated sub-threshold input, even at high collision speeds', () => {
+    for (const strength of [0.2, 0.6, 0.75]) {
+      const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+      for (let i = 0; i < 300; i++) {
+        physics.shake(strength, { x: 1, y: 1 });
+        physics.update(1000 / 60);
+      }
+      expect(physics.entities).toHaveLength(1);
+      expect(physics.completedTrails).toHaveLength(0);
+      expect(physics.entities[0].damage).toBe(0);
+      physics.dispose();
+    }
+  });
+  it('does not let a previous fast gesture enable breaking during a slow gesture', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    physics.shake(1);
+    physics.shake(0.2);
+    const body = physics.entities[0].body;
+    Matter.Body.setPosition(body, { x: 200, y: 582 });
+    Matter.Body.setVelocity(body, { x: 0, y: 20 });
+    physics.update(1000 / 60);
+    expect(physics.entities).toHaveLength(1);
+    expect(physics.completedTrails).toHaveLength(0);
+    physics.dispose();
+  });
+  it('expires a fast gesture across a stalled frame before processing a collision', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    physics.shake(1);
+    Matter.Body.setPosition(physics.entities[0].body, { x: 200, y: 582 });
+    Matter.Body.setVelocity(physics.entities[0].body, { x: 0, y: 20 });
+    physics.update(1000);
+    expect(physics.completedTrails).toHaveLength(0);
+    physics.dispose();
+  });
   it('keeps gentle repeated input within a small warp envelope', () => {
     const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
     for (let i = 0; i < 50; i++) physics.shake(0.2);

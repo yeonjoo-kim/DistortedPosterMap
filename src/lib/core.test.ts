@@ -75,7 +75,31 @@ describe('color and boundary separation', () => {
     expect(labels[10 * w + 24]).not.toBe(labels[10 * w + 26]);
     expect(regions.reduce((n, r) => n + r.count, 0)).toBe(w * h);
     expect([...labels].every((id) => id > 0)).toBe(true);
-    expect(regions.length).toBeGreaterThan(4);
+    expect(regions).toHaveLength(4);
+    // One continuous background must stay one shape across former tile boundaries.
+    expect(labels[0]).toBe(labels[29 * w + 24]);
+  });
+  it('does not cut a uniform color into equal rectangles, regardless of its size', () => {
+    const pixels = new Uint8ClampedArray(240 * 240 * 4);
+    for (let i = 0; i < pixels.length; i += 4) pixels.set([200, 40, 90, 255], i);
+    const { regions, labels } = colorRegions(pixels, 240, 240);
+    expect(regions).toEqual([{ id: 1, x: 0, y: 0, width: 240, height: 240, count: 240 * 240 }]);
+    expect(new Set(labels)).toEqual(new Set([1]));
+  });
+  it('follows curved overlapping color boundaries and preserves cutout holes', () => {
+    const w = 90, h = 90, pixels = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const red = Math.hypot(x - 36, y - 40) < 25;
+      const blue = Math.hypot(x - 58, y - 40) < 22;
+      pixels.set(blue ? [0, 0, 255, 255] : red ? [255, 0, 0, 255] : [255, 255, 255, 255], (y * w + x) * 4);
+    }
+    const { regions, labels } = colorRegions(pixels, w, h);
+    expect(regions).toHaveLength(3);
+    const background = labels[0], red = labels[40 * w + 20], blue = labels[40 * w + 60];
+    expect(new Set([background, red, blue]).size).toBe(3);
+    expect(labels[40 * w + 45]).toBe(blue);
+    expect(labels[89 * w + 89]).toBe(background);
+    expect(regions.reduce((n, r) => n + r.count, 0)).toBe(w * h);
   });
   it('leaves transparent pixels transparent and preserves isolated opaque islands', () => {
     const pixels = new Uint8ClampedArray(100 * 4);

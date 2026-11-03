@@ -8,6 +8,7 @@ import {
   materialResponse,
   MATERIAL_MIX,
 } from './math';
+import { FRACTURE_SPEED_THRESHOLD } from './motion';
 import type { MotionSample } from './motion';
 import type {
   ElementTelemetry,
@@ -64,7 +65,8 @@ export class PosterPhysics {
   annotationLimit = 12;
   annotationScale = 1;
   private draggingFixtures = new Set<string>();
-  private fractureThreshold = 0.5;
+  private fractureWindow = 0;
+  private fractureCooldown = 0;
   completedTrails: {
     id: string;
     path: Point[];
@@ -157,16 +159,12 @@ export class PosterPhysics {
                 impact *
                 Math.min(18, entity.element.width * 0.12),
           );
-          entity.damage = Math.min(
-            1,
-            entity.damage +
-              impact * impact * (0.1 + this.peak * MATERIAL_MIX.fracture),
+          if (this.fractureWindow > 0) entity.damage = Math.min(
+            1, entity.damage + impact * impact * 0.15,
           );
           if (
-            materialResponse(this.peak).canFracture &&
-            this.peak >= this.fractureThreshold &&
-            this.peakAge < 2.8 &&
-            speed > 4.5 - MATERIAL_MIX.fracture * 2.5 &&
+            this.fractureWindow > 0 &&
+            speed > 10 &&
             entity.element.width > 20 &&
             entity.element.height > 14
           )
@@ -271,12 +269,15 @@ export class PosterPhysics {
   }
 
   applyMotion(sample: MotionSample) {
-    if (this.settings.paused || this.settings.original || sample.confidence <= 0) return;
+    if (this.settings.paused || this.settings.original || sample.confidence <= 0) {
+      this.fractureWindow = 0;
+      this.toBreak.clear();
+      return;
+    }
     if (sample.source !== this.lastInput?.source) {
       this.peak = 0;
       this.peakAge = 0;
     }
-    this.fractureThreshold = sample.source === 'body' ? 0.65 : 0.5;
     this.shake(sample.strength, sample.direction);
     this.lastInput = { ...sample, direction: { ...sample.direction } };
   }
@@ -284,6 +285,9 @@ export class PosterPhysics {
   shake(amplitude = 0.55, direction: Point = { x: 0.85, y: -0.95 }) {
     if (this.settings.paused || this.settings.original) return;
     const strength = shakeImpulse(amplitude);
+    const fast = strength > FRACTURE_SPEED_THRESHOLD;
+    this.fractureWindow = fast ? 0.22 : 0;
+    if (!fast) this.toBreak.clear();
     if (strength < 0.08) return;
     this.active = true;
     this.energy = Math.max(this.energy, strength);
@@ -311,9 +315,11 @@ export class PosterPhysics {
     }
     for (const entity of this.entities) {
       entity.strain += strength * 0.52;
-      entity.damage = Math.min(1, entity.damage + strength * strength * 0.035);
-      if (entity.damage >= 1 || (strength >= this.fractureThreshold && entity.damage >= 0.2))
-        this.toBreak.add(entity);
+      if (fast) {
+        const excess = (strength - FRACTURE_SPEED_THRESHOLD) / (1 - FRACTURE_SPEED_THRESHOLD);
+        entity.damage = Math.min(1, entity.damage + excess * excess * 0.055);
+        if (entity.damage >= 0.35) this.toBreak.add(entity);
+      } else entity.damage *= 0.9;
       Matter.Body.setStatic(entity.body, false);
       Matter.Sleeping.set(entity.body, false);
       entity.body.restitution = profile.restitution;
@@ -355,11 +361,18 @@ export class PosterPhysics {
   }
 
   update(delta: number) {
-    if (this.settings.paused || this.settings.original) return;
+    if (this.settings.paused || this.settings.original) {
+      this.fractureWindow = 0;
+      this.toBreak.clear();
+      return;
+    }
+    const elapsed = clamp(delta, 0, 1000) / 1000;
     const dt = clamp(delta, 0, 1000 / 60) / 1000;
     this.energy *= Math.exp(-dt * 2.5);
     this.impactEnergy *= Math.exp(-dt * 4);
     this.peakAge += dt;
+    this.fractureWindow = Math.max(0, this.fractureWindow - elapsed);
+    this.fractureCooldown = Math.max(0, this.fractureCooldown - elapsed);
     if (!this.active) return;
     this.engine.gravity.y = 0;
     // A weak circulating current keeps released pieces suspended without a downwards bias.
@@ -386,10 +399,11 @@ export class PosterPhysics {
       entity.previousPosition = { ...position };
     }
     this.frame++;
-    if (this.entities.length < 650)
-      for (const entity of [...this.toBreak].filter((entity) => this.canSplit(entity)).slice(0, 6)) {
+    if (this.entities.length < 650 && this.fractureWindow > 0 && this.fractureCooldown === 0)
+      for (const entity of [...this.toBreak].filter((entity) => this.canSplit(entity)).slice(0, 2)) {
         if (this.entities.length + 3 > 650) break;
         this.fracture(entity);
+        this.fractureCooldown = 0.65;
       }
     this.toBreak.clear();
     for (const entity of this.entities) {

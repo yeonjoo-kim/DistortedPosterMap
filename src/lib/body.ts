@@ -1,4 +1,5 @@
 import { clamp } from './math';
+import { FRACTURE_SPEED_THRESHOLD } from './motion';
 import type { MotionSample } from './motion';
 export interface Joint {
   x: number;
@@ -228,7 +229,7 @@ export function motionEffect(strength: number): BodyObservation['effect'] {
     ? 'REST'
     : strength < 0.35
       ? 'MOVE'
-      : strength < 0.65
+      : strength <= FRACTURE_SPEED_THRESHOLD
         ? 'BEND'
         : 'BREAK';
 }

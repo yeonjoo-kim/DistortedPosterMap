@@ -77,17 +77,22 @@ try {
   }), 'base64');
   await upload(page, png);
   assert.equal(await page.evaluate(() => !!window.__constraints), false);
-  await page.getByLabel('Crop x', { exact: true }).fill('20');
-  await page.getByLabel('Crop y', { exact: true }).fill('40');
-  await page.getByLabel('Crop width', { exact: true }).fill('340');
-  await page.getByLabel('Crop height', { exact: true }).fill('480');
+  const crop = page.getByRole('dialog', { name: 'Crop poster', exact: true });
+  assert.equal(await crop.locator('h1,p,input').count(), 0);
+  assert.deepEqual(await crop.getByRole('button').allTextContents(), ['Cancel', 'Use crop']);
+  const surface = await page.locator('.crop-surface').boundingBox();
+  await page.mouse.move(surface.x + surface.width * .05, surface.y + surface.height / 15);
+  await page.mouse.down();
+  await page.mouse.move(surface.x + surface.width * .9, surface.y + surface.height * 13 / 15);
+  await page.mouse.up();
   await click(page, 'Use crop');
   await page.waitForFunction(() => document.querySelectorAll('.node-overlay circle').length >= 15);
   await page.waitForTimeout(1400);
   assert.equal(await page.getByRole('dialog').count(), 0);
   assert.equal(await page.evaluate(() => window.__constraints.audio), false);
   assert.equal(await page.locator('.studio.is-distorting').count(), 0);
-  if (!production) { const initial = await map(page); assert.equal(initial.width, 340); assert.equal(initial.height, 480); assert(initial.elements.every((e) => e.dx === 0 && e.dy === 0)); }
+  if (!production) { const initial = await map(page); assert(Math.abs(initial.width - 340) <= 1); assert(Math.abs(initial.height - 480) <= 1); assert(initial.elements.every((e) => e.dx === 0 && e.dy === 0)); }
+  assert(!(await page.locator('.input-heading').innerText()).match(/Body nodes|Choose an input/i));
   record('Free-ratio crop applied; desktop automatically starts body tracking and holds the complete poster still');
   assert.equal(await page.locator('.input-meter,.response-scale,.output-count').count(), 0);
   assert.equal(await page.getByRole('button', { name: /Expand tracking/ }).count(), 0);
@@ -143,8 +148,11 @@ try {
       const blank = asset.background.getContext('2d').getImageData(0, 0, 240, 240).data.every((v) => v === 0);
       const engine = new PosterPhysics(asset, DEFAULT_SETTINGS);
       engine.setBounds({ x: -300, y: -300, width: 840, height: 840 });
+      for (let i = 0; i < 240; i++) { engine.shake(.6, { x: Math.cos(i), y: Math.sin(i) }); engine.update(16); }
+      const slowCount = engine.entities.length;
+      const noSlowBreaks = engine.completedTrails.length === 0 && slowCount === asset.elements.length;
       let firstCount = 0, recursive = false;
-      for (let i = 0; i < 90; i++) { engine.shake(.95, { x: Math.cos(i), y: Math.sin(i) }); engine.update(16); if (i === 15) firstCount = engine.entities.length; }
+      for (let i = 0; i < 360; i++) { engine.shake(.95, { x: Math.cos(i), y: Math.sin(i) }); engine.update(16); if (i === 45) firstCount = engine.entities.length; }
       recursive = engine.entities.some((e) => e.element.id.split('.').length >= 3);
       const count = engine.entities.length, sum = engine.entities.reduce((s,e) => s+e.areaWeight, 0);
       const finite = engine.mapData().elements.every((e) => e.sourceVertices.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)));
@@ -156,9 +164,9 @@ try {
       render.stroke = (...args) => { trailsPainted = true; return stroke(...args); };
       render.drawImage = (...args) => { if (!trailsPainted) pathUnderPieces = false; return drawImage(...args); };
       engine.render(render, true); engine.dispose();
-      return { difference, blank, firstCount, count, recursive, sum, finite, gravity, pathUnderPieces };
+      return { difference, blank, noSlowBreaks, firstCount, count, recursive, sum, finite, gravity, pathUnderPieces };
     });
-    assert.equal(physics.difference, 0); assert(physics.blank); assert(physics.recursive);
+    assert.equal(physics.difference, 0); assert(physics.blank); assert(physics.noSlowBreaks); assert(physics.recursive);
     assert(physics.count > physics.firstCount); assert(Math.abs(physics.sum - 240 * 240) < .01);
     assert(physics.finite); assert.equal(physics.gravity, 0); assert(physics.pathUnderPieces);
     record('All pixels reconstructed exactly; no fixed background remains; fragments split again with conserved area, zero gravity and paths underneath');
@@ -170,7 +178,7 @@ try {
   const cropSurface = await mobile.locator('.crop-surface').boundingBox();
   await mobile.mouse.move(cropSurface.x + 5, cropSurface.y + 5); await mobile.mouse.down();
   await mobile.mouse.move(cropSurface.x + cropSurface.width * .7, cropSurface.y + cropSurface.height * .6); await mobile.mouse.up();
-  assert(Number(await mobile.getByLabel('Crop width', { exact: true }).inputValue()) < 400);
+  assert((await mobile.locator('.crop-selection').boundingBox()).width < cropSurface.width);
   await click(mobile, 'Use crop');
   await mobile.getByRole('dialog', { name: 'Choose motion input', exact: true }).waitFor();
   assert.equal(await mobile.evaluate(() => !!window.__constraints), false);
