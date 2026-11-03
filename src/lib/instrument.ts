@@ -85,9 +85,7 @@ export class PosterInstrument {
     }
     if (this.context.state !== 'running') await this.context.resume();
     if (this.context.state !== 'running')
-      throw new Error(
-        '소리를 시작하려면 브라우저에서 연주 시작 버튼을 눌러 주세요.',
-      );
+      throw new Error('Press the sound button to enable audio.');
     this.enabled = true;
   }
 

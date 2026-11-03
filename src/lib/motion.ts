@@ -1,13 +1,15 @@
 import { clamp } from './math';
 import type { Point } from './types';
+import type { BodyObservation } from './body';
 
-export type MotionSource = 'sensor' | 'camera' | 'test';
+export type MotionSource = 'sensor' | 'camera' | 'body' | 'test';
 export interface MotionSample {
   strength: number;
   direction: Point;
   source: MotionSource;
   magnitude: number;
   confidence: number;
+  body?: BodyObservation;
 }
 export type InputStatus = {
   state:
@@ -61,14 +63,14 @@ export async function startDeviceMotion(
     onStatus({
       state: 'unavailable',
       message: !window.isSecureContext
-        ? '센서는 HTTPS 연결에서 사용할 수 있습니다.'
-        : '이 브라우저는 가속도 센서를 제공하지 않습니다. 카메라 감지를 사용해 주세요.',
+        ? 'Device motion requires HTTPS.'
+        : 'This browser does not expose a motion sensor. Choose a camera input.',
     });
     return;
   }
   onStatus({
     state: 'requesting',
-    message: '브라우저의 센서 사용 권한을 확인 중…',
+    message: 'Checking sensor permission…',
   });
   try {
     if (
@@ -78,7 +80,7 @@ export async function startDeviceMotion(
       if (!signal.aborted)
         onStatus({
           state: 'denied',
-          message: '센서 권한이 허용되지 않았습니다.',
+          message: 'Sensor permission denied.',
         });
       return;
     }
@@ -86,7 +88,7 @@ export async function startDeviceMotion(
     if (!signal.aborted)
       onStatus({
         state: 'denied',
-        message: '브라우저의 센서 권한을 확인해 주세요.',
+        message: 'Check sensor access in your browser settings.',
       });
     return;
   }
@@ -107,7 +109,7 @@ export async function startDeviceMotion(
       connected = true;
       onStatus({
         state: 'connected',
-        message: '가속도 값 수신 중 · 노트북을 움직여 반응을 확인해 주세요.',
+        message: 'Receiving acceleration. Move the device to perform.',
       });
     }
     let acceleration = linear;
@@ -137,13 +139,13 @@ export async function startDeviceMotion(
       onStatus({
         state: 'unavailable',
         message:
-          '가속도 데이터가 제공되지 않습니다. 이 맥북에서는 카메라 감지를 사용해 주세요.',
+          'No acceleration data is available. Choose body nodes or camera motion.',
       });
     } else if (connected && performance.now() - lastReceived > 2000) {
       connected = false;
       onStatus({
         state: 'stale',
-        message: '센서 신호가 멈췄습니다. 연결 상태를 확인해 주세요.',
+        message: 'Sensor signal stopped. Check the connection.',
       });
       onSample({ ...accelerationSample({ x: 0, y: 0, z: 0 }), confidence: 0 });
     }
@@ -152,6 +154,6 @@ export async function startDeviceMotion(
   signal.addEventListener('abort', cleanup, { once: true });
   onStatus({
     state: 'requesting',
-    message: '실제 가속도 데이터가 들어오는지 확인 중…',
+    message: 'Waiting for actual acceleration data…',
   });
 }

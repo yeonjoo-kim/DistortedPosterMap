@@ -1,4 +1,5 @@
 import Matter from 'matter-js';
+import { randomTrailColor } from './trailColor';
 import { canvas } from './demo';
 import {
   clamp,
@@ -24,6 +25,7 @@ interface Entity {
   origin: Point;
   path: Point[];
   distance: number;
+  trailColor: string;
   previousPosition: Point;
   warp: number;
   sharpness: number;
@@ -60,7 +62,14 @@ export class PosterPhysics {
   selected: string | null = null;
   annotationLimit = 12;
   annotationScale = 1;
-  completedTrails: { id: string; path: Point[]; end: Point }[] = [];
+  private draggingFixtures = new Set<string>();
+  private fractureThreshold = 0.5;
+  completedTrails: {
+    id: string;
+    path: Point[];
+    end: Point;
+    trailColor: string;
+  }[] = [];
   energy = 0;
   impactEnergy = 0;
   active = false;
@@ -101,6 +110,7 @@ export class PosterPhysics {
         origin: { x: element.x, y: element.y },
         path: [{ x: element.x, y: element.y }],
         distance: 0,
+        trailColor: randomTrailColor(),
         previousPosition: { x: element.x, y: element.y },
         warp: 0,
         sharpness: 0,
@@ -153,6 +163,7 @@ export class PosterPhysics {
           if (
             !entity.parentId &&
             materialResponse(this.peak).canFracture &&
+            this.peak >= this.fractureThreshold &&
             this.peakAge < 2.8 &&
             speed > 4.5 - MATERIAL_MIX.fracture * 2.5 &&
             entity.element.width > 20 &&
@@ -214,7 +225,44 @@ export class PosterPhysics {
     );
   }
 
+  beginFixtureDrag(id: string) {
+    const fixture = this.fixtures.find((item) => item.id === id);
+    if (!fixture) return null;
+    this.draggingFixtures.add(id);
+    Matter.Body.setStatic(fixture.body, true);
+    return { ...fixture.body.position };
+  }
+  moveFixture(id: string, position: Point) {
+    const fixture = this.fixtures.find((item) => item.id === id);
+    if (!fixture) return;
+    const halfW = (fixture.body.bounds.max.x - fixture.body.bounds.min.x) / 2;
+    const halfH = (fixture.body.bounds.max.y - fixture.body.bounds.min.y) / 2;
+    Matter.Body.setPosition(fixture.body, {
+      x: clamp(
+        position.x,
+        this.bounds.x + halfW + 4,
+        this.bounds.x + this.bounds.width - halfW - 4,
+      ),
+      y: clamp(
+        position.y,
+        this.bounds.y + halfH + 4,
+        this.bounds.y + this.bounds.height - halfH - 4,
+      ),
+    });
+  }
+  endFixtureDrag(id: string) {
+    this.draggingFixtures.delete(id);
+    const fixture = this.fixtures.find((item) => item.id === id);
+    if (fixture) Matter.Body.setStatic(fixture.body, !this.active);
+  }
+
   applyMotion(sample: MotionSample) {
+    if (this.settings.paused || this.settings.original) return;
+    if (sample.source !== this.lastInput?.source) {
+      this.peak = 0;
+      this.peakAge = 0;
+    }
+    this.fractureThreshold = sample.source === 'body' ? 0.65 : 0.5;
     this.shake(sample.strength, sample.direction);
     this.lastInput = { ...sample, direction: { ...sample.direction } };
   }
@@ -230,7 +278,8 @@ export class PosterPhysics {
       this.peakAge = 0;
     }
     const profile = materialResponse(strength);
-    for (const { body } of this.fixtures) {
+    for (const { id, body } of this.fixtures) {
+      if (this.draggingFixtures.has(id)) continue;
       Matter.Body.setStatic(body, false);
       Matter.Sleeping.set(body, false);
       Matter.Body.setVelocity(body, {
@@ -515,6 +564,7 @@ export class PosterPhysics {
         origin,
         path: [{ ...world }],
         distance: entity.distance,
+        trailColor: randomTrailColor(),
         previousPosition: { ...world },
         warp: 0,
         sharpness: entity.sharpness,
@@ -548,6 +598,7 @@ export class PosterPhysics {
     }
     this.completedTrails.push({
       id: el.id,
+      trailColor: entity.trailColor,
       path: [
         ...entity.path.map((point) => ({ ...point })),
         { ...body.position },
@@ -612,14 +663,20 @@ export class PosterPhysics {
 
   private drawTracking(ctx: CanvasRenderingContext2D) {
     const scale = this.annotationScale;
-    const trace = (path: Point[], end: Point, archived = false) => {
+    const trace = (
+      path: Point[],
+      end: Point,
+      color: string,
+      archived = false,
+    ) => {
       if (!path.length) return;
       ctx.beginPath();
       path.forEach((point, i) =>
         i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y),
       );
       ctx.lineTo(end.x, end.y);
-      ctx.strokeStyle = archived ? 'rgba(220,87,48,.35)' : 'rgba(220,87,48,.7)';
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = archived ? 0.45 : 0.95;
       ctx.lineWidth = (archived ? 0.8 : 1.1) * scale;
       ctx.setLineDash([]);
       ctx.stroke();
@@ -635,20 +692,22 @@ export class PosterPhysics {
     if (this.settings.showPaths) {
       ctx.save();
       for (const trail of this.completedTrails)
-        trace(trail.path, trail.end, true);
+        trace(trail.path, trail.end, trail.trailColor, true);
       for (const entity of this.entities) {
         const { origin, body, path } = entity;
         // The dotted displacement is distinct from the actual travelled route.
-        ctx.strokeStyle = 'rgba(220,87,48,.28)';
+        ctx.strokeStyle = entity.trailColor;
+        ctx.globalAlpha = 0.28;
         ctx.lineWidth = 0.65 * scale;
         ctx.setLineDash([3 * scale, 4 * scale]);
         ctx.beginPath();
         ctx.moveTo(origin.x, origin.y);
         ctx.lineTo(body.position.x, body.position.y);
         ctx.stroke();
-        trace(path, body.position);
+        trace(path, body.position, entity.trailColor);
+        ctx.globalAlpha = 1;
         ctx.fillStyle = '#fff9e9';
-        ctx.strokeStyle = '#dc5730';
+        ctx.strokeStyle = entity.trailColor;
         ctx.lineWidth = scale;
         ctx.beginPath();
         ctx.arc(origin.x, origin.y, 2.5 * scale, 0, Math.PI * 2);
@@ -662,7 +721,7 @@ export class PosterPhysics {
         ctx.save();
         ctx.translate(body.position.x, body.position.y);
         ctx.rotate(angle);
-        ctx.fillStyle = '#dc5730';
+        ctx.fillStyle = entity.trailColor;
         ctx.beginPath();
         ctx.moveTo(4 * scale, 0);
         ctx.lineTo(-3 * scale, -2.6 * scale);
@@ -672,7 +731,7 @@ export class PosterPhysics {
         ctx.restore();
         if (entity.warp > 0.2 || entity.compression > 0.02) {
           const points = this.deformationPoints(entity.element.id);
-          ctx.strokeStyle = 'rgba(30,137,128,.8)';
+          ctx.strokeStyle = entity.trailColor;
           ctx.lineWidth = 1.2 * scale;
           ctx.beginPath();
           points.forEach((point, i) =>
@@ -701,14 +760,14 @@ export class PosterPhysics {
       .sort((a, b) => b.distance - a.distance)
       .slice(0, this.annotationLimit);
     ctx.save();
-    ctx.font = `${10 * scale}px monospace`;
+    ctx.font = `${11 * scale}px ${this.active ? 'MetaAccanthisAlternate' : 'MetaAccanthis'}, sans-serif`;
     ctx.textBaseline = 'top';
     for (const entity of candidates) {
       const { body, origin } = entity;
       const lines = [
         `${entity.element.id.toUpperCase()}  X ${body.position.x.toFixed(1)}  Y ${body.position.y.toFixed(1)}`,
-        `ΔX ${signed(body.position.x - origin.x)}  ΔY ${signed(body.position.y - origin.y)}`,
-        `L ${entity.distance.toFixed(1)}  θ ${signed((body.angle * 180) / Math.PI)}°  W ${entity.warp.toFixed(1)}`,
+        `dX ${signed(body.position.x - origin.x)}  dY ${signed(body.position.y - origin.y)}`,
+        `L ${entity.distance.toFixed(1)}  R ${signed((body.angle * 180) / Math.PI)}deg  W ${entity.warp.toFixed(1)}`,
       ];
       const width = Math.min(
         this.bounds.width - 8 * scale,
@@ -760,7 +819,7 @@ export class PosterPhysics {
       const box = boxes.sort((a, b) => overlap(a) - overlap(b))[0];
       if (used.length && overlap(box) > width * height * 0.05) continue;
       used.push(box);
-      ctx.strokeStyle = 'rgba(181,91,52,.5)';
+      ctx.strokeStyle = entity.trailColor;
       ctx.lineWidth = 0.7 * scale;
       ctx.setLineDash([]);
       ctx.beginPath();
@@ -801,6 +860,10 @@ export class PosterPhysics {
   telemetry(): Telemetry {
     return {
       active: this.active,
+      fragments: this.entities.filter(
+        (entity) => entity.element.kind === 'fragment',
+      ).length,
+      fractures: this.completedTrails.length,
       energy: this.energy,
       impact: this.impactEnergy,
       deformation: Math.max(
@@ -825,6 +888,7 @@ export class PosterPhysics {
           scaleY,
           areaWeight,
           distance,
+          trailColor,
         }): ElementTelemetry => ({
           id: element.id,
           label: element.label,
@@ -843,6 +907,7 @@ export class PosterPhysics {
           scaleY,
           areaWeight,
           distance,
+          trailColor,
           path: path.map((p) => ({ ...p })),
         }),
       ),
@@ -922,6 +987,7 @@ export class PosterPhysics {
       input: this.lastInput,
       completedTrails: this.completedTrails.map((trail) => ({
         id: trail.id,
+        trailColor: trail.trailColor,
         path: trail.path.map((point) => ({ ...point })),
         end: { ...trail.end },
       })),

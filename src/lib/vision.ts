@@ -116,11 +116,11 @@ export async function startCameraMotion(
     onStatus({
       state: 'unavailable',
       message:
-        '카메라는 HTTPS 연결의 Safari 또는 Chrome에서 사용할 수 있습니다.',
+        'Camera tracking requires HTTPS and a modern Safari or Chrome browser.',
     });
     return;
   }
-  onStatus({ state: 'requesting', message: '내장 카메라 권한을 기다리는 중…' });
+  onStatus({ state: 'requesting', message: 'Waiting for camera permission…' });
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -141,8 +141,8 @@ export async function startCameraMotion(
             : 'unavailable',
         message:
           error instanceof DOMException && error.name === 'NotAllowedError'
-            ? '카메라 권한이 허용되지 않았습니다. 브라우저의 사이트 권한을 확인해 주세요.'
-            : '사용 가능한 카메라를 찾지 못했습니다.',
+            ? 'Camera permission denied. Allow camera access in your browser settings.'
+            : 'No available camera was found.',
       });
     return;
   }
@@ -172,7 +172,7 @@ export async function startCameraMotion(
     if (!signal.aborted)
       onStatus({
         state: 'unavailable',
-        message: '카메라 영상을 시작하지 못했습니다. 다시 연결해 주세요.',
+        message: 'The camera could not start. Reconnect to try again.',
       });
     return;
   }
@@ -186,7 +186,7 @@ export async function startCameraMotion(
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   onStatus({
     state: 'connected',
-    message: '카메라 연결 · 배경의 이동으로 움직임을 추정합니다.',
+    message: 'Camera connected. Movement is estimated from the whole scene.',
   });
   const tick = (now: number) => {
     if (stopped) return;
@@ -220,8 +220,8 @@ export async function startCameraMotion(
             state: 'connected',
             message:
               confidence < 0.6
-                ? '배경 추적이 불안정합니다. 밝고 무늬가 있는 정지한 배경을 비춰 주세요.'
-                : '카메라 추정 · 노트북과 배경 사이의 상대 움직임',
+                ? 'Low tracking confidence. Use a well-lit, textured and stationary background.'
+                : 'Camera motion: movement relative to the background.',
           });
         }
       }
@@ -239,7 +239,7 @@ export async function startCameraMotion(
           cleanup();
           onStatus({
             state: 'unavailable',
-            message: '카메라 연결이 종료되었습니다.',
+            message: 'Camera disconnected.',
           });
         }
       },

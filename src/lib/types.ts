@@ -30,6 +30,7 @@ export interface Settings {
 export interface ElementTelemetry {
   areaWeight: number;
   distance: number;
+  trailColor: string;
   id: string;
   label: string;
   x: number;
@@ -48,6 +49,8 @@ export interface ElementTelemetry {
   path: Point[];
 }
 export interface Telemetry {
+  fragments: number;
+  fractures: number;
   elements: ElementTelemetry[];
   energy: number;
   active: boolean;

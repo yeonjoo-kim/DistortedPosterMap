@@ -11,9 +11,13 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
-    "test:browser": "node scripts/smoke.mjs"
+    "test:browser": "node scripts/smoke.mjs",
+    "predev": "node scripts/prepare-tracking.mjs",
+    "prebuild": "node scripts/prepare-tracking.mjs",
+    "pretest:browser": "node scripts/prepare-tracking.mjs"
   },
   "dependencies": {
+    "@mediapipe/holistic": "0.5.1675471629",
     "jspdf": "^3.0.3",
     "lucide-react": "^0.468.0",
     "matter-js": "^0.20.0",

@@ -47,8 +47,7 @@ export async function exportPoster(
         0.95,
       ),
     );
-    if (!blob)
-      throw new Error('이미지 저장에 실패했습니다. 다시 시도해 주세요.');
+    if (!blob) throw new Error('Image export failed. Please try again.');
     download(blob, `${basename}-offset.${format}`);
   }
 }

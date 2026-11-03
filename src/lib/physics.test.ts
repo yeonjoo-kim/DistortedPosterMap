@@ -168,4 +168,53 @@ describe('physical workflow', () => {
     ).toBe(true);
     physics.dispose();
   });
+  it('holds, drags and clamps a panel while poster motion is paused', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    physics.setFixtures([
+      { id: 'adjust-box', x: 300, y: 200, width: 100, height: 120 },
+    ]);
+    physics.shake(0.4);
+    physics.update(1000 / 60);
+    physics.settings.paused = true;
+    const before = physics.telemetry();
+    expect(physics.beginFixtureDrag('adjust-box')).not.toBeNull();
+    physics.moveFixture('adjust-box', { x: -100, y: 2000 });
+    const body = physics.fixtures[0].body;
+    expect(body.bounds.min.x).toBeGreaterThanOrEqual(0);
+    expect(body.bounds.max.y).toBeLessThanOrEqual(600);
+    physics.update(1000 / 60);
+    expect(physics.telemetry()).toEqual(before);
+    physics.endFixtureDrag('adjust-box');
+    expect(Number.isFinite(body.mass)).toBe(true);
+    physics.dispose();
+  });
+  it('keeps medium body gestures below the documented fracture threshold', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    physics.applyMotion({
+      source: 'body',
+      strength: 0.6,
+      magnitude: 1,
+      confidence: 1,
+      direction: { x: 0, y: 1 },
+    });
+    Matter.Body.setPosition(physics.entities[0].body, { x: 200, y: 582 });
+    Matter.Body.setVelocity(physics.entities[0].body, { x: 0, y: 12 });
+    physics.update(1000 / 60);
+    expect(physics.entities).toHaveLength(1);
+    expect(physics.telemetry().elements[0].compression).toBeGreaterThan(0);
+    const color = physics.mapData().elements[0].trailColor;
+    physics.settings.paused = true;
+    const before = physics.telemetry();
+    physics.applyMotion({
+      source: 'body',
+      strength: 1,
+      magnitude: 5,
+      confidence: 1,
+      direction: { x: 1, y: 1 },
+    });
+    physics.update(1000 / 60);
+    expect(physics.telemetry()).toEqual(before);
+    expect(physics.mapData().elements[0].trailColor).toBe(color);
+    physics.dispose();
+  });
 });

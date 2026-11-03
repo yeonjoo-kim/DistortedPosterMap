@@ -4,6 +4,7 @@ import { PosterInstrument } from './lib/instrument';
 import { startDeviceMotion } from './lib/motion';
 import type { InputStatus, MotionSample } from './lib/motion';
 import { startCameraMotion } from './lib/vision';
+import { startBodyCamera } from './lib/bodyCamera';
 import type { PosterPhysics } from './lib/physics';
 import type { Settings } from './lib/types';
 
@@ -12,10 +13,12 @@ export function useMotionInstrument(
   settings: RefObject<Settings>,
   notice: (message: string) => void,
 ) {
-  const [source, setSource] = useState<'sensor' | 'camera' | null>(null);
+  const [source, setSource] = useState<'sensor' | 'camera' | 'body' | null>(
+    null,
+  );
   const [status, setStatus] = useState<InputStatus>({
     state: 'idle',
-    message: '노트북의 실제 움직임으로 연주하세요.',
+    message: 'Choose body nodes, camera motion or a device sensor.',
   });
   const [sample, setSample] = useState<MotionSample | null>(null);
   const [sound, setSound] = useState<
@@ -38,13 +41,17 @@ export function useMotionInstrument(
     } catch {
       setSound('unavailable');
       noticeRef.current(
-        '소리를 시작하지 못했습니다. 브라우저의 사이트 소리 설정을 확인해 주세요.',
+        'Sound could not start. Check your browser sound settings.',
       );
     }
   }, []);
 
   const receive = useCallback(
-    (value: MotionSample) => {
+    (raw: MotionSample) => {
+      const value =
+        raw.strength < 0.08
+          ? { ...raw, strength: 0, direction: { x: 0, y: 0 } }
+          : raw;
       performing.current = value.confidence > 0;
       if (!settings.current.paused && !settings.current.original)
         engine.current?.applyMotion(value);
@@ -65,13 +72,13 @@ export function useMotionInstrument(
     setSample(null);
     setStatus({
       state: 'idle',
-      message: '움직임 감지를 멈췄습니다. 카메라도 해제되었습니다.',
+      message: 'Tracking stopped. The camera has been released.',
     });
     audio.current.silence();
   }, []);
 
   const startInput = useCallback(
-    (next: 'sensor' | 'camera') => {
+    (next: 'sensor' | 'camera' | 'body') => {
       controller.current?.abort();
       performing.current = false;
       audio.current.silence();
@@ -85,6 +92,7 @@ export function useMotionInstrument(
           setStatus(value);
           if (['unavailable', 'denied', 'stale'].includes(value.state)) {
             performing.current = false;
+            setSample(null);
             audio.current.silence();
           }
         }
@@ -95,7 +103,7 @@ export function useMotionInstrument(
       if (next === 'sensor')
         void startDeviceMotion(onSample, onStatus, control.signal);
       else if (videoRef.current)
-        void startCameraMotion(
+        void (next === 'body' ? startBodyCamera : startCameraMotion)(
           videoRef.current,
           onSample,
           onStatus,

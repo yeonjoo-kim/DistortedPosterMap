@@ -1,17 +1,17 @@
 # Poster Distorting Map
 
-브라우저에서 PDF·JPG·PNG 포스터를 자동으로 요소로 분리하고, 노트북의 움직임에 따라 변형하고 연주하는 웹 앱입니다. 별도 서버나 API 키가 필요하지 않습니다.
+An installation instrument that separates an uploaded poster into pieces and drives their motion, deformation, collision and fracture from body landmarks or device movement. Images and camera frames stay on the viewer's device.
 
-## 실행과 검증
+## Run
 
-Node.js 24와 npm을 사용합니다.
+Use Node.js 24 and npm. No server, database, API key or secret is required.
 
 ```sh
 npm ci --cache /workspace/.cache/npm --no-audit --no-fund
 npm run dev -- --port 5173
 ```
 
-다른 환경에서는 `--cache` 옵션을 생략할 수 있습니다. 개발 서버와 배포용 정적 결과물을 검증하는 명령입니다.
+The cache flag can be omitted outside the cloud workspace. `predev`, `prebuild` and `pretest:browser` run `scripts/prepare-tracking.mjs`. It copies the SDK, WASM and models unchanged from the pinned official `@mediapipe/holistic` package into the ignored `public/tracking/` directory. Browser inference uses these same-origin files, with no external inference service or runtime CDN.
 
 ```sh
 npm test
@@ -20,50 +20,60 @@ SMOKE_PRODUCTION=1 npm run test:browser
 npm run preview
 ```
 
-브라우저 검사는 시스템 Chromium(`/usr/bin/chromium` 또는 `CHROMIUM_PATH`)을 사용합니다. 자체 서버를 4175 포트에서 시작하고 종료합니다. SVG 디자인과 빈 업로드 화면, 자동 분리, 실제 입력 처리 경로, 화면 전체의 충돌·파편화와 움직이는 UI, 소리 출력, 저장 파일 및 모바일 화면을 검사합니다. 테스트 스크린샷은 `test-results/`에 생성됩니다.
+Browser tests use `/usr/bin/chromium` or `CHROMIUM_PATH`, start their own server on port 4175, and stop it afterwards. Software WebGL flags allow the real local model to run in headless Chromium. Screenshots are saved to the ignored `test-results/` directory.
 
-## 화면과 재료
+## Exhibition setup
 
-사용자가 제공한 Home.svg, Start.svg, Procss.svg를 시각 참고로 삼았습니다. `public/design`의 테이프·업로드·로고·About 벡터는 첨부 SVG에서 추출했습니다. 옅은 노란 배경과 테이프로 고정한 종이, 오른쪽 하단 연두색 조절 박스를 사용합니다.
+1. Upload a PDF, JPG or PNG poster, up to 50 MB. PDF import uses the first page. Upload does not automatically request camera access or open a camera dialog.
+2. Open **Motion input** in the green panel and choose **Body nodes · fixed camera**. Allow browser and operating-system camera access. The first start downloads approximately 30 MB of tracking assets from this website and initializes the local model.
+3. Keep the exhibition camera fixed and the performer well lit. Keep the face, hands and body in view. Use **Expand tracking view** to inspect nodes. Body, face and hand tracking requires a modern browser with WebAssembly and WebGL/hardware acceleration.
+4. Nodes cover the head, torso, arms, legs, hands, individual finger joints/tips, eyes, nose and mouth. Colored part badges show detected/missing regions and their normalized movement percentages. Missing or occluded regions do not generate substitute movement.
+5. The strongest active region, its percentage and the resulting poster response appear together. Motion below 8% is filtered out. At 8–34%, pieces move; at 35–64%, deformation and collisions become stronger; at 65% or more, body input enables fracture **when a piece collides**. A gesture does not split every piece immediately. A brief **FRACTURED** response confirms an actual split. Fragment counts are measured from the simulation.
+6. **Pause motion** freezes the simulation, accumulated distances and sound. Live camera nodes keep running so input can be inspected without changing the poster. **Resume motion** continues from that state.
+7. Drag the green **panel** by its grip or any non-button area with a mouse or touch. Arrow keys on the grip move it by 10 screen pixels; Shift moves by 40. Movement stays within the viewport. Hovering/interacting holds the panel so its buttons remain usable. After a drag or keyboard move it stays where placed for the current layout. A new upload or viewport resize restores its layout position. The camera preview is separate from the panel.
+8. The page cannot scroll. The About dialog and input menu may scroll internally on very short screens; this does not move the underlying page, title or panel.
 
-- 포스터 업로드, 움직임 감지, 연주 소리 켜기/끄기, 움직임 시각화, 다운로드만 조절 박스에 남겼습니다. 개별 요소 목록·선택·삭제·수동 흔들기·물리 슬라이더·모드 선택·원본 비교·초기화·일시정지는 없습니다.
-- 추가 요청에 따라 로고, About, 조절 박스는 부서지지 않는 물체로 움직입니다. 포스터 조각과 같은 물리 공간에서 충돌하며 버튼도 계속 사용할 수 있습니다. About은 간단한 소개를 엽니다.
-- 움직임을 감지하면 포스터 요소가 중력에 따라 떨어지고 충돌 시 눌렸다 복원되며, 강한 충돌에서는 삼각형 파편으로 나뉩니다. 포스터의 종이 경계를 넘어 브라우저 화면 전체에서 반응합니다. 브라우저 창 바깥이나 운영체제 바탕화면으로 나가지는 않습니다.
-- `MATERIAL_MIX`는 지그재그 0.2, 부서짐 0.8입니다. 지그재그 변위의 주입량과 상한을 종전의 20%로 줄이고, 부서짐 가중치로 충돌 속도 임계값과 손상을 계산합니다. 중간 이상의 흔들림에서도 파편화가 발생합니다. 이는 재료 반응 가중치이며 매 프레임 픽셀 수나 조각 수가 정확히 20:80이라는 뜻은 아닙니다.
-- 소리는 작은 움직임의 부드러운 저음에서 큰 움직임의 높은 배음·노이즈·충돌음으로 바뀝니다. 최초 사용자 동작으로 Web Audio를 시작합니다.
-- 경로·수치 표시는 업로드 시 기본으로 켜집니다. 기존 시각화 영역을 누르면 포스터 위 표시를 켜고 끌 수 있습니다. 요소를 선택하거나 목록을 조작할 필요가 없습니다.
-- 주황 실선은 실제 이동 경로, 점선은 원래 위치에서 현재 위치까지의 순이동, 작은 원은 원래 위치, 화살표는 현재 위치를 표시합니다. 청록 선은 휨·압축이 반영된 중심선이며 ×는 조각이 분리된 지점입니다. 부서지기 전 요소의 경로도 남깁니다.
-- 포스터 위 수치 카드에는 X/Y 현재 좌표, ΔX/ΔY 이동량, L 누적 이동 거리, θ 회전각, W 수평 휨 진폭을 소수점 한 자리로 표시합니다. 기준점은 원본 포스터 좌상단(0,0), 길이 단위는 분석된 포스터의 px, 회전은 °입니다. 화면이나 노트북의 물리 이동 거리가 아닙니다. 겹침을 줄이기 위해 누적 이동 거리가 큰 최대 12개(작은 화면 6개) 요소에 수치 카드를 표시하며 경로와 JSON에는 전체 요소를 담습니다.
-- L은 경로를 그리는 샘플 간격과 별도로 매 물리 프레임에서 요소 중심의 이동 거리를 합산합니다. 조각은 분리 전 부모 요소의 누적 거리를 이어받고 분리 시점부터 각자의 경로를 기록합니다. 긴 연주에서는 오래된 경로 점을 간추리되 시작점과 최근 궤적을 유지합니다.
-- 조절 박스 Position X/Y·Offset X/Y와 평균 누적 거리는 원본 면적으로 가중한 전체 값입니다. 파편화 시 면적 가중치 합을 보존하며 최대 휨 W도 표시합니다. 표시를 끈 상태에서 이미지로 저장하면 경로와 수치를 제외하고, 켜면 함께 저장합니다. JSON은 토글 상태와 무관하게 전체 좌표·누적 거리·변형 꼭짓점·경로 및 분리 전 경로를 저장합니다.
+Camera tracking is local and processes one performer. It does not identify a person. Fine finger and facial tracking needs more image detail than large arm/leg gestures. Distance, lighting, occlusion, multiple overlapping people and browser/GPU performance affect accuracy. Input percentages measure normalized landmark speed, not physical centimeters or a medical measurement. Facial and fingertip motion uses face/hand-relative proportions; large body regions use body-relative scale.
 
-## 노트북 움직임 감지
+## Other input modes
 
-센서와 카메라 모두 HTTPS 또는 localhost에서 동작합니다. API가 존재하는 것만으로 감지 성공을 표시하지 않습니다. 실제 가속도 데이터를 두 번 이상 받아야 센서 연결 상태가 됩니다. 무응답, 끊김 및 권한 거부는 별도로 표시합니다.
+- **Camera movement · optical flow** keeps the previous whole-scene movement estimate for moving laptops/cameras. Use a textured, stationary background. Moving people or backgrounds can also trigger this mode. It does not assign anatomical nodes.
+- **Device motion sensor** uses real `DeviceMotionEvent` acceleration when the browser exposes it. It reports connected only after two numeric samples and distinguishes unavailable data, denied permission and stale signals. A 2020 M1 MacBook Pro may not expose accelerometer data to the browser.
+- Camera-motion/device-sensor input retains a 50% fracture threshold, shown in its response scale. Both modes use the same 8% rest gate and simulation.
+- Switching modes, stopping tracking, hiding the page or unmounting releases camera tracks. The body inference instance is closed after any in-flight frame completes. The microphone is never requested. Video is neither recorded nor uploaded.
 
-**2020년형 13인치 M1 MacBook Pro에서 브라우저가 가속도를 제공한다고 보장할 수 없습니다.** 센서가 노출되지 않는 기기에서는 카메라의 광학 흐름으로 상대 움직임을 추정합니다. 이는 가속도 실측과 다릅니다. 충분한 조명과 무늬가 있는 정지한 배경이 필요하며, 움직이는 사람이나 배경이 화면 대부분을 차지하면 노트북 움직임으로 오인할 수 있습니다.
+## Panel, typography and paths
 
-1. 포스터를 업로드합니다.
-2. 노트북 아이콘 → **카메라로 움직임 감지**를 선택하고 macOS·브라우저의 카메라 권한을 허용합니다.
-3. 정지한 배경이 영상에 넓게 보이도록 하고 노트북을 작게 움직여 **카메라 추정** 강도와 포스터가 반응하는지 확인합니다.
-4. 스피커 아이콘으로 연주 소리를 켜고 끕니다.
-5. 센서를 확인하려면 노트북 아이콘 → **가속도 센서 확인**을 선택합니다. 데이터 미제공 상태라면 카메라 추정을 사용합니다.
-6. 노트북 아이콘 → **움직임 감지 중지**로 카메라를 해제합니다.
+The green **Poster panel** retains four readouts: Position X/Y and Offset X/Y, plus paths toggle, Download, Pause/Resume, Motion input and Sound. The former mean-distance/maximum-bend row, legend and explanatory text highlighted in the requested screenshot are removed. The explanation is available in **About** instead.
 
-영상은 기기 메모리 안에서만 분석하며 저장·전송하지 않습니다. 마이크는 요청하지 않습니다. 감지 중지·입력 전환·탭 이탈·컴포넌트 해제 시 카메라 트랙을 중지합니다.
+Every generated interface string is English. The user-provided `MetaAccanthis.ttf` is used before movement and `MetaAccanthisAlternate.ttf` after the first deformation, including UI numbers and canvas annotations. A new upload restores the initial font. Text already embedded in an uploaded poster remains part of its original image.
 
-테스트는 합성 가속도 이벤트와 캔버스 기반 가짜 카메라 스트림을 실제 처리 코드에 연결하고 Web Audio 파형과 주파수 분포를 검사합니다. 실제 사용자 M1 맥북을 흔들어 시험한 결과는 아닙니다.
+**Trails describe poster pieces, not the performer's body or laptop.**
 
-## 파일과 저장
+- X/Y: the piece center's current coordinates.
+- dX/dY: displacement from its original center.
+- L: cumulative center travel, sampled every physics step independently of drawing density.
+- R: rotation in degrees.
+- W: horizontal bend amplitude.
 
-입력은 PDF·JPG·PNG(최대 50MB)입니다. PDF는 첫 페이지를 사용하며, 텍스트 영역을 분리한 뒤 나머지를 픽셀 분석합니다. JPG·PNG는 픽셀 연결 영역을 분석합니다. 의미 단위 AI 분리나 OCR 모델은 포함하지 않습니다. 단색 배경의 그래픽 포스터와 텍스트 PDF에서 잘 작동하며, 복잡하거나 겹친 요소는 합쳐질 수 있습니다. 복잡한 사진은 타일 분리로 대체할 수 있습니다. 분리되지 않은 픽셀은 원래 종이의 배경에 남습니다.
+The origin is the original poster's top-left. Position and distance units are pixels of the analyzed poster, not screen pixels or physical-world distances. Panel coordinates are the area-weighted center/offset of all pieces. Negative coordinates are valid after pieces leave the original paper.
 
-Download에서 PNG·JPG·이미지 기반 PDF 및 좌표·경로 JSON을 저장합니다. 이미지에는 종이 밖으로 퍼진 조각을 포함한 현재 화면 크기의 포스터 영역을 담으며, UI는 포함하지 않습니다. 시각화가 켜졌다면 좌표·경로도 포함합니다. JSON에는 포스터 좌표계 기준 화면 경계, 입력, 개별 요소의 원래/현재 위치·변형 꼭짓점·경로 및 부서지지 않는 UI 물체의 위치가 포함됩니다. 화면 크기를 바꾸면 물리 경계를 갱신하고 UI 물체를 디자인상의 위치에 다시 배치합니다.
+Each piece receives a randomly assigned saturated RGB trail color that remains stable while it moves. New fragments get their own colors. Parent trails are retained, and a cross marks the split position. Fragments inherit accumulated parent travel and record their own route from birth. Older route samples are thinned for long performances while retaining the start and recent details. Numeric cards prioritize up to 12 widely traveled pieces (6 on small screens) and avoid overlapping UI/other cards; all elements remain in the JSON map.
 
-긴 변을 최대 1,200px로 분석하고 현재 화면 영역을 포스터 좌표계의 2배로 출력합니다. 확대 출력은 원본 벡터 품질 복원을 뜻하지 않습니다. PDF 출력도 래스터 이미지입니다. 파일은 서버에 업로드하지 않으며 새로고침 시 작업이 초기화됩니다.
+The baseline damp-clay physics mixes gravity, collision squash/recovery, low-amplitude zigzag bending and triangular fracture. `MATERIAL_MIX` stays at zigzag 0.2 / fracture 0.8 as response weights, not a literal count/pixel ratio. Poster pieces can move across the entire viewport. The title, About and panel remain unbreakable physical bodies.
 
-## Vercel
+## Import and export
 
-연결 저장소는 `yeonjoo-kim/DistortedPosterMap`의 `main`입니다. `vercel.json`은 Vite / `npm run build` / `dist`를 지정합니다. 서버·DB·환경 변수는 필요하지 않습니다. main에 push하면 연결된 Vercel 프로젝트의 자동 배포가 시작됩니다.
+Connected pixel regions and native PDF text regions are separated automatically. Complex images may use tiles. This is not semantic AI object segmentation or OCR; overlapping elements can merge. The long image edge is analyzed at up to 1,200 pixels. Unseparated pixels remain on the paper background.
 
-공개 주소: https://distortedpostermap.vercel.app/
+PNG/JPG/image-based PDF exports capture the current poster arena, including pieces outside the paper. UI is excluded. Path/number overlays follow the ON/OFF toggle. JSON always retains all original/current positions, distances, deformation vertices, parent trails, stable trail colors and the latest applied input data. Camera observations may continue while paused, but do not alter that applied-input record. PDF export is raster, and 2× output is enlargement rather than vector reconstruction. Refreshing resets the session.
+
+## Validation and deployment
+
+Unit tests cover region separation, input/noise thresholds, anatomical-region measurements, exact reaction boundaries, RGB saturation, body-only fracture gating, dragging while paused, path history and cumulative travel. Browser tests exercise mouse and touch dragging, page scroll prevention, English text/fonts/numbers, pause/resume/audio, synthetic acceleration, optical flow, deterministic full landmark sequences and their MOVE/BEND/fracture results, permissions/cleanup and image/PDF/JSON exports.
+
+A separate browser case runs the **real self-hosted Holistic model** on the public TensorFlow.js person-image fixture. Deterministic body-gesture cases replace only the SDK response in the test browser; they are not tests of real human performance. The user's actual exhibition camera/computer has not been tested from this cloud environment. Validate lighting, framing, permissions and performance on-site before opening the exhibition.
+
+Vercel is connected to `yeonjoo-kim/DistortedPosterMap`, branch `main`. `vercel.json` specifies Vite, `npm run build` and `dist`. Pushing main triggers the connected deployment.
+
+https://distortedpostermap.vercel.app/

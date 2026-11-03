@@ -66,14 +66,14 @@ export function createDemo(): PosterAsset {
   };
   text('DESIGN IN A STATE OF FLUX', 36, 28, 11, '600', 1.3);
   text('EXPERIMENT No. 001', 391, 28, 10, '500', 0.5);
-  add('상단 구분선', 'shape', 38, 58, 524, 2, (ctx) => {
+  add('Top divider', 'shape', 38, 58, 524, 2, (ctx) => {
     ctx.fillStyle = '#252621';
     ctx.fillRect(0, 0, 524, 2);
   });
   text('NOTHING', 27, 79, 99, '900');
   text('STAYS', 29, 176, 99, '900');
   text('STILL.', 29, 273, 99, '900');
-  add('오렌지 오비트', 'shape', 164, 375, 273, 273, (ctx) => {
+  add('Orange orbit', 'shape', 164, 375, 273, 273, (ctx) => {
     ctx.fillStyle = '#f4512c';
     ctx.beginPath();
     ctx.arc(136.5, 136.5, 134.5, 0, Math.PI * 2);
@@ -92,14 +92,14 @@ export function createDemo(): PosterAsset {
       ctx.restore();
     }
   });
-  add('궤도 타원', 'shape', 56, 433, 484, 156, (ctx) => {
+  add('Orbital ellipse', 'shape', 56, 433, 484, 156, (ctx) => {
     ctx.strokeStyle = '#252621';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.ellipse(242, 78, 239, 54, -0.12, 0, Math.PI * 2);
     ctx.stroke();
   });
-  add('대각선 화살표', 'shape', 474, 382, 42, 42, (ctx) => {
+  add('Diagonal arrow', 'shape', 474, 382, 42, 42, (ctx) => {
     ctx.strokeStyle = '#252621';
     ctx.lineWidth = 2.5;
     ctx.beginPath();
@@ -114,7 +114,7 @@ export function createDemo(): PosterAsset {
   text('A NEW PERSPECTIVE.', 39, 699, 14, '700', 0.7);
   text('SHAKE TO', 440, 679, 11, '500', 0.8);
   text('REIMAGINE.', 440, 697, 11, '500', 0.8);
-  add('하단 구분선', 'shape', 38, 744, 524, 1, (ctx) => {
+  add('Bottom divider', 'shape', 38, 744, 524, 1, (ctx) => {
     ctx.fillStyle = '#252621';
     ctx.fillRect(0, 0, 524, 1);
   });
@@ -132,7 +132,7 @@ export function createDemo(): PosterAsset {
     source,
     background,
     elements,
-    method: '샘플 · 개별 디자인 요소',
+    method: 'Sample design elements',
     pageCount: 1,
   };
 }

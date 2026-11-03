@@ -157,7 +157,7 @@ export function extractElements(
           h = Math.round(((row + 1) * height) / rows) - y;
         const sprite = canvas(w, h);
         sprite.getContext('2d')!.drawImage(source, x, y, w, h, 0, 0, w, h);
-        add(sprite, x, y, `이미지 조각 ${row + 1}.${col + 1}`, 'region');
+        add(sprite, x, y, `Image tile ${row + 1}.${col + 1}`, 'region');
       }
   } else {
     for (const region of regions
@@ -184,7 +184,7 @@ export function extractElements(
             image.data[p + 3] = 0;
         }
       ctx.putImageData(image, 0, 0);
-      add(sprite, x, y, `분리 영역 ${elements.length + 1}`, 'region');
+      add(sprite, x, y, `Separated region ${elements.length + 1}`, 'region');
     }
   }
   bc.save();
@@ -200,10 +200,10 @@ export function extractElements(
     color,
     elements,
     method: textBoxes.length
-      ? 'PDF 텍스트 + 픽셀 영역'
+      ? 'PDF text + pixel regions'
       : tiled
-        ? '이미지 조각 분할'
-        : '배경 대비 · 픽셀 영역 분리',
+        ? 'Image tiles'
+        : 'Background contrast + pixel regions',
     pageCount: 1,
   };
 }
@@ -214,7 +214,7 @@ export async function loadPoster(
   page = 1,
 ): Promise<PosterAsset> {
   if (file.size > 50 * 1024 * 1024)
-    throw new Error('50MB 이하의 파일을 선택해 주세요.');
+    throw new Error('Choose a file smaller than 50 MB.');
   if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
     const pdfjs = await import('pdfjs-dist');
     const worker = await import('pdfjs-dist/build/pdf.worker.min.mjs?url');
@@ -258,14 +258,14 @@ export async function loadPoster(
     !/\.(png|jpe?g)$/i.test(file.name) &&
     !['image/png', 'image/jpeg'].includes(file.type)
   )
-    throw new Error('PDF, JPG 또는 PNG 파일을 선택해 주세요.');
+    throw new Error('Choose a PDF, JPG or PNG file.');
   const url = URL.createObjectURL(file);
   try {
     const image = new Image();
     image.src = url;
     await image.decode();
     if (!image.naturalWidth || !image.naturalHeight)
-      throw new Error('이미지를 읽을 수 없습니다.');
+      throw new Error('Unable to read this image.');
     const scale = Math.min(
       1,
       1200 / Math.max(image.naturalWidth, image.naturalHeight),

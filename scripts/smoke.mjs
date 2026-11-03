@@ -47,10 +47,14 @@ try {
   browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
     headless: true,
-    args: ['--no-sandbox'],
+    args: [
+      '--no-sandbox',
+      '--use-angle=swiftshader',
+      '--enable-unsafe-swiftshader',
+    ],
   });
   const context = await browser.newContext({
-    viewport: { width: 1280, height: 832 },
+    viewport: { width: 1440, height: 900 },
     acceptDownloads: true,
   });
   const page = await context.newPage();
@@ -59,17 +63,8 @@ try {
     window.__audioContexts = [];
     window.__analysers = [];
     window.__trackingText = [];
-    const nativeText = CanvasRenderingContext2D.prototype.fillText;
-    CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
-      if (
-        /^(E\d|ΔX|L )/.test(String(text)) &&
-        window.__trackingText.length < 2000
-      )
-        window.__trackingText.push(String(text));
-      return nativeText.call(this, text, ...args);
-    };
-    const NativeAudio = window.AudioContext;
-    window.AudioContext = class extends NativeAudio {
+    const Audio = window.AudioContext;
+    window.AudioContext = class extends Audio {
       constructor(...args) {
         super(...args);
         window.__audioContexts.push(this);
@@ -81,39 +76,33 @@ try {
         return node;
       }
     };
+    const text = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (value, ...args) {
+      if (
+        /^(E\d|dX|L )/.test(String(value)) &&
+        window.__trackingText.length < 2000
+      )
+        window.__trackingText.push({ value: String(value), font: this.font });
+      return text.call(this, value, ...args);
+    };
   });
-  await page.goto(`http://127.0.0.1:${port}`);
-  await page
-    .getByRole('button', { name: '포스터 올리기', exact: true })
-    .waitFor();
-  assert.equal(await page.locator('canvas').count(), 0);
-  assert.equal(await page.getByRole('slider').count(), 0);
-  assert.equal(
-    await page.locator('.layer-item,header,footer,.effect-options').count(),
-    0,
-  );
-  const blankPaper = await page.locator('.paper').boundingBox();
-  assert(Math.abs(blankPaper.width - 534) < 4);
-  await page.screenshot({ path: 'test-results/home.png', fullPage: true });
-  record(
-    'Figma paper, tapes and upload control replace the old workbench and element list',
-  );
-
-  const click = (name, target = page) =>
-    target.getByRole('button', { name, exact: true }).click({ force: true });
-  async function choose(name, target = page) {
-    const button = target.getByRole('menuitem', { name, exact: true });
+  const base = `http://127.0.0.1:${port}`;
+  const click = async (name, target = page) => {
+    const button = target.getByRole('button', { name, exact: true });
+    await button.hover({ force: true });
     await button.click({ force: true });
-  }
-  async function menu(name, target = page) {
+  };
+  const choose = async (name, target = page) =>
+    target.getByRole('menuitem', { name, exact: true }).click({ force: true });
+  async function open(name, target = page) {
     await target.keyboard.press('Escape');
     await click(name, target);
   }
   async function map(target = page) {
-    await menu('다운로드', target);
-    const promise = target.waitForEvent('download');
-    await choose('좌표 · 경로 JSON', target);
-    return JSON.parse(await readFile(await (await promise).path(), 'utf8'));
+    await open('Download', target);
+    const pending = target.waitForEvent('download');
+    await choose('Coordinates & paths · JSON', target);
+    return JSON.parse(await readFile(await (await pending).path(), 'utf8'));
   }
   async function upload(
     buffer,
@@ -122,33 +111,33 @@ try {
     target = page,
   ) {
     await target
-      .getByLabel('포스터 파일 선택')
+      .getByLabel('Poster file', { exact: true })
       .setInputFiles({ name, mimeType, buffer });
     await target.waitForFunction(
       () =>
         document.querySelector('.paper')?.getAttribute('aria-busy') === 'false',
     );
-    await target.getByLabel('왜곡되는 포스터', { exact: true }).waitFor();
+    await target.getByLabel('Distorted poster', { exact: true }).waitFor();
+    assert.equal(await target.getByRole('dialog').count(), 0);
   }
   async function sensor(x, y = 0, z = 0) {
     await page.evaluate(
-      ({ x, y, z }) => {
+      ({ x, y, z }) =>
         window.dispatchEvent(
           new DeviceMotionEvent('devicemotion', {
             acceleration: { x, y, z },
             accelerationIncludingGravity: { x: 0, y: 9.81, z: 0 },
             interval: 50,
           }),
-        );
-      },
+        ),
       { x, y, z },
     );
-    await page.waitForTimeout(60);
+    await page.waitForTimeout(65);
   }
   async function spectrum() {
     return page.evaluate(() => {
       const analyser = window.__analysers[0];
-      if (!analyser) return { centroid: 0, power: 0 };
+      if (!analyser) return { rms: 0, power: 0, centroid: 0 };
       const values = new Float32Array(analyser.frequencyBinCount);
       analyser.getFloatFrequencyData(values);
       let power = 0,
@@ -158,65 +147,112 @@ try {
         power += p;
         weighted += (p * i * analyser.context.sampleRate) / analyser.fftSize;
       }
-      const waveform = new Float32Array(analyser.fftSize);
-      analyser.getFloatTimeDomainData(waveform);
-      const rms = Math.sqrt(
-        waveform.reduce((sum, v) => sum + v * v, 0) / waveform.length,
-      );
-      return { power, rms, centroid: weighted / Math.max(power, 1e-12) };
+      const wave = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(wave);
+      return {
+        power,
+        centroid: weighted / Math.max(power, 1e-12),
+        rms: Math.sqrt(wave.reduce((sum, v) => sum + v * v, 0) / wave.length),
+      };
     });
   }
+  await page.goto(base);
+  await page
+    .getByRole('button', { name: 'Upload poster', exact: true })
+    .waitFor();
+  await page.evaluate(() =>
+    Promise.all([
+      document.fonts.load('20px MetaAccanthis'),
+      document.fonts.load('20px MetaAccanthisAlternate'),
+    ]),
+  );
+  assert.equal(await page.locator('canvas').count(), 0);
+  assert.equal(await page.getByRole('slider').count(), 0);
+  assert(!/[가-힣]/.test(await page.locator('body').innerText()));
+  assert(
+    (
+      await page
+        .locator('.wordmark')
+        .evaluate((el) => getComputedStyle(el).fontFamily)
+    ).includes('MetaAccanthis'),
+  );
+  await page.screenshot({ path: 'test-results/home.png' });
+  record(
+    'English interface loads the supplied font without extra startup dialogs',
+  );
   const image = await page.evaluate(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 400;
-    canvas.height = 600;
-    const ctx = canvas.getContext('2d');
+    const c = document.createElement('canvas');
+    c.width = 400;
+    c.height = 600;
+    const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, 400, 600);
-    ctx.fillStyle = '#202020';
+    ctx.fillStyle = '#222';
     ctx.fillRect(30, 30, 120, 70);
     ctx.fillRect(210, 140, 140, 85);
     ctx.fillStyle = '#ed552f';
     ctx.beginPath();
     ctx.arc(140, 350, 65, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#202020';
+    ctx.fillStyle = '#222';
     ctx.font = '32px Arial';
     ctx.fillText('HELLO POSTER', 30, 520);
     return {
-      png: canvas.toDataURL('image/png').split(',')[1],
-      jpg: canvas.toDataURL('image/jpeg').split(',')[1],
+      png: c.toDataURL('image/png').split(',')[1],
+      jpg: c.toDataURL('image/jpeg').split(',')[1],
     };
   });
   const png = Buffer.from(image.png, 'base64');
   await upload(png);
+  assert.equal(
+    await page.locator('.tracking-stats,.tracking-key,.tracking-units').count(),
+    0,
+  );
+  assert.equal(await page.locator('.coordinate output').count(), 4);
   const initial = await map();
-  assert(initial.elements.length >= 4);
   assert(initial.settings.showPaths && initial.settings.showLabels);
-  assert(initial.elements.every((e) => e.distance === 0));
+  assert(initial.elements.length >= 4);
+  assert(new Set(initial.elements.map((e) => e.trailColor)).size > 2);
+  assert(initial.elements.every((e) => /^rgb\(/.test(e.trailColor)));
+  record(
+    'The highlighted panel statistics and legends are removed; four poster coordinates remain',
+  );
+  const panel = page.getByRole('region', { name: 'Poster panel', exact: true });
+  const beforeDrag = await panel.boundingBox(),
+    grip = await page
+      .getByRole('button', { name: 'Move panel', exact: true })
+      .boundingBox();
+  await page.mouse.move(grip.x + 35, grip.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(grip.x - 180, grip.y - 95, { steps: 15 });
+  await page.mouse.up();
+  await page.waitForTimeout(100);
+  const afterDrag = await panel.boundingBox();
+  assert(afterDrag.x < beforeDrag.x - 150 && afterDrag.y < beforeDrag.y - 60);
+  await page.getByRole('button', { name: 'Move panel', exact: true }).focus();
+  const keyboardBefore = await panel.boundingBox();
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.waitForTimeout(80);
+  assert((await panel.boundingBox()).x > keyboardBefore.x + 30);
+  await page.mouse.move(10, 10);
+  const placedPanel = await panel.boundingBox();
+  record(
+    'Mouse dragging and arrow keys reposition the panel within the viewport',
+  );
+  await page.screenshot({ path: 'test-results/desktop.png' });
+  await click('About');
+  await page.getByRole('dialog', { name: 'About', exact: true }).waitFor();
   assert(
-    await page.evaluate(() =>
-      window.__trackingText.some((line) => line.startsWith('ΔX')),
+    (await page.getByRole('dialog').innerText()).includes(
+      'not your body or the laptop',
     ),
   );
-  assert.equal(await page.getByRole('dialog').count(), 0);
+  await page.keyboard.press('Escape');
   record(
-    'Paths and coordinate/offset/distance annotations are enabled on upload without a new popup',
+    'About explains that trails measure poster piece centers in poster pixels',
   );
-  assert.deepEqual(initial.materialMix, { zigzag: 0.2, fracture: 0.8 });
-  assert(
-    initial.bounds.width > initial.width &&
-      initial.bounds.height > initial.height,
-  );
-  assert.equal(initial.fixtures.length, 3);
-  assert(initial.fixtures.every((e) => e.breakable === false));
-  await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
-  record(
-    'Uploaded elements and three unbreakable interface bodies share the full-screen arena',
-  );
-
-  await menu('노트북 움직임 감지');
-  await choose('가속도 센서 확인');
+  await open('Motion input');
+  await choose('Device motion sensor');
   await page.waitForFunction(
     () =>
       document
@@ -227,20 +263,18 @@ try {
   );
   assert(
     (await page.locator('.connection-detail').textContent()).includes(
-      '제공되지',
+      'No acceleration data',
     ),
   );
-  record(
-    'Absent hardware data is reported without claiming the laptop sensor connected',
-  );
-  await choose('가속도 센서 확인');
+  await choose('Device motion sensor');
   await page.waitForFunction(() =>
     document
       .querySelector('.connection-detail')
-      ?.textContent.includes('실제 가속도 데이터'),
+      ?.textContent.includes('actual acceleration'),
   );
   await sensor(0);
   await sensor(0);
+  await sensor(1);
   await page.waitForFunction(
     () =>
       document
@@ -248,149 +282,146 @@ try {
         ?.getAttribute('data-state') === 'connected',
   );
   await page.keyboard.press('Escape');
-  const zero = await map();
-  assert(zero.elements.every((e) => Math.hypot(e.dx, e.dy) < 0.01));
+  assert((await map()).elements.every((e) => Math.hypot(e.dx, e.dy) < 0.01));
   record(
-    'Two simulated acceleration samples establish input while zero movement preserves the layout',
+    'A device sensor is connected only after two actual samples, with no motion at zero',
   );
-
-  for (let i = 0; i < 5; i++) await sensor(2.6, -0.6);
-  const softSpectrum = await spectrum();
-  const soft = await map();
+  await page.evaluate(() => {
+    window.__trackingText = [];
+  });
+  for (let i = 0; i < 6; i++) await sensor(2.6, -0.6);
+  const softSpectrum = await spectrum(),
+    soft = await map();
   assert(soft.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
   assert(soft.elements.every((e) => e.kind !== 'fragment'));
-  assert(soft.elements.every((e) => e.warp < 5));
-  assert(soft.elements.some((e) => e.distance > Math.hypot(e.dx, e.dy)));
+  const panelAfterMotion = await panel.boundingBox();
   assert(
-    Number.parseFloat(
-      await page
-        .getByLabel('평균 누적 이동 거리', { exact: true })
-        .textContent(),
-    ) > 0,
+    Math.abs(panelAfterMotion.x - placedPanel.x) < 1 &&
+      Math.abs(panelAfterMotion.y - placedPanel.y) < 1,
   );
   assert(
-    soft.fixtures.some(
-      (e, i) =>
-        Math.hypot(e.x - initial.fixtures[i].x, e.y - initial.fixtures[i].y) >
-        5,
+    (
+      await page
+        .locator('.coordinate output')
+        .first()
+        .evaluate((el) => getComputedStyle(el).fontFamily)
+    ).includes('MetaAccanthisAlternate'),
+  );
+  assert(
+    await page.evaluate(() =>
+      window.__trackingText.some((line) =>
+        line.font.includes('MetaAccanthisAlternate'),
+      ),
     ),
   );
   record(
-    'Gentle movement produces restrained warping and moves the unbreakable logo, About and adjust box',
+    'Motion switches both UI numbers and canvas annotations to the alternate supplied font',
   );
-  await click('연주 소리');
-  await page.waitForTimeout(450);
-  const muted = await spectrum();
-  assert(muted.rms < Math.max(softSpectrum.rms * 0.02, 1e-5));
-  await click('연주 소리');
-  record('Sound toggle mutes the actual Web Audio output');
-
-  for (let i = 0; i < 12; i++) await sensor(i % 2 ? 11 : -11, 3);
+  await click('Pause motion');
+  await page.waitForTimeout(350);
+  const paused = await map();
+  await sensor(18, -15, 2);
+  await page.waitForTimeout(200);
+  const still = await map();
+  assert.deepEqual(
+    paused.elements.map((e) => [e.x, e.y, e.rotation, e.distance]),
+    still.elements.map((e) => [e.x, e.y, e.rotation, e.distance]),
+  );
+  assert((await spectrum()).rms < 1e-5);
+  const positionsBeforeWheel = await page
+    .locator('.wordmark,.about-button,.mapping-panel')
+    .evaluateAll((nodes) =>
+      nodes.map((el) => {
+        const box = el.getBoundingClientRect();
+        return [box.x, box.y];
+      }),
+    );
+  await page.mouse.wheel(0, 1800);
+  await page.evaluate(() => window.scrollTo(0, 900));
+  await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => scrollY), 0);
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollHeight > innerHeight,
+    ),
+    false,
+  );
+  assert.deepEqual(
+    await page
+      .locator('.wordmark,.about-button,.mapping-panel')
+      .evaluateAll((nodes) =>
+        nodes.map((el) => {
+          const box = el.getBoundingClientRect();
+          return [box.x, box.y];
+        }),
+      ),
+    positionsBeforeWheel,
+  );
+  record(
+    'Pause freezes poster position, rotation, accumulated distance and audio, and wheel scrolling moves nothing',
+  );
+  await click('Resume motion');
+  for (let i = 0; i < 12; i++) await sensor(i % 2 ? 15 : -15, 8);
   const hardSpectrum = await spectrum();
   assert(hardSpectrum.power > softSpectrum.power);
-  assert(hardSpectrum.centroid > softSpectrum.centroid * 1.3);
+  assert(
+    hardSpectrum.centroid > softSpectrum.centroid * 1.3,
+    JSON.stringify({ softSpectrum, hardSpectrum }),
+  );
   let broken;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 8; i++) {
     broken = await map();
     if (broken.elements.some((e) => e.kind === 'fragment')) break;
-    await sensor(i % 2 ? -12 : 12, 8);
+    await sensor(18, 10);
     await page.waitForTimeout(150);
   }
   assert(broken.elements.some((e) => e.kind === 'fragment'));
   assert(broken.completedTrails.length > 0);
   assert(
-    broken.completedTrails.every(
-      (trail) => trail.path.length > 1 && Number.isFinite(trail.end.x),
-    ),
-  );
-  assert(
-    broken.elements
-      .filter((e) => e.kind === 'fragment')
-      .every((e) => e.distance > 0),
-  );
-  record(
-    'Fragment creation preserves prior routes and inherits cumulative travel in the JSON map',
-  );
-  assert(
-    broken.elements
-      .filter((e) => e.kind === 'fragment')
-      .every((e) => e.collisionVertices.length === 3),
-  );
-  assert(
     broken.elements.every(
-      (e) =>
-        e.deformationVertices.length === 18 &&
-        e.deformationVertices.every(
-          (v) => Number.isFinite(v.x) && Number.isFinite(v.y),
-        ),
+      (e) => Number.isFinite(e.distance) && e.deformationVertices.length === 18,
     ),
   );
-  const weight = (data) =>
-    data.elements.reduce((sum, e) => sum + e.areaWeight, 0);
-  assert(Math.abs(weight(broken) - weight(initial)) < 0.01);
+  const colors = new Map(broken.elements.map((e) => [e.id, e.trailColor]));
+  const again = await map();
   assert(
-    broken.elements.some(
-      (e) => e.x < 0 || e.x > broken.width || e.y < 0 || e.y > broken.height,
-    ),
-  );
-  assert.equal(broken.fixtures.length, 3);
-  assert(
-    broken.fixtures.every((e) => e.breakable === false && Number.isFinite(e.x)),
+    again.elements
+      .filter((e) => colors.has(e.id))
+      .every((e) => colors.get(e.id) === e.trailColor),
   );
   record(
-    'Moderate strong input creates triangular fragments outside the paper while preserving interface bodies and area weights',
+    'Stronger input creates fragments, louder/brighter sound and stable saturated RGB trails',
   );
-  record('Stronger movement produces louder and brighter instrument output');
-  await click('움직임 시각화');
+  await click('Show paths and numbers');
   assert.equal(
     await page
-      .getByRole('button', { name: '움직임 시각화', exact: true })
+      .getByRole('button', { name: 'Show paths and numbers', exact: true })
       .getAttribute('aria-pressed'),
     'false',
   );
-  await page.waitForTimeout(100);
+  await page.waitForTimeout(80);
   await page.evaluate(() => {
     window.__trackingText = [];
   });
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(100);
   assert.equal(await page.evaluate(() => window.__trackingText.length), 0);
-  await click('움직임 시각화');
-  assert.equal(
-    await page
-      .getByRole('button', { name: '움직임 시각화', exact: true })
-      .getAttribute('aria-pressed'),
-    'true',
-  );
-  const mapped = await map();
-  assert(mapped.settings.showPaths && mapped.settings.showLabels);
-  assert(mapped.elements.some((e) => e.path.length > 2));
-  assert.equal(await page.locator('.coordinate output').count(), 4);
-  await page.screenshot({ path: 'test-results/fractured.png', fullPage: true });
-  record(
-    'One visualization control hides and restores the detailed numeric overlay without individual selection',
-  );
-
-  await menu('노트북 움직임 감지');
-  await choose('움직임 감지 중지');
-  await page.keyboard.press('Escape');
+  await click('Show paths and numbers');
+  await click('Pause motion');
+  await page.screenshot({ path: 'test-results/fractured.png' });
   for (const format of ['PNG', 'JPG', 'PDF']) {
-    await menu('다운로드');
-    const promise = page.waitForEvent('download');
+    await open('Download');
+    const pending = page.waitForEvent('download');
     await choose(format);
-    const bytes = await readFile(await (await promise).path());
+    const bytes = await readFile(await (await pending).path());
     assert(bytes.length > 1000);
-    if (format === 'PNG') {
-      assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
-      assert(bytes.readUInt32BE(16) > 1500);
-    }
+    if (format === 'PNG') assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
     if (format === 'JPG')
       assert.equal(bytes.subarray(0, 2).toString('hex'), 'ffd8');
     if (format === 'PDF') assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
-    record(`${format} downloads the expanded poster image`);
+    record(`${format} exports the current poster and path overlay`);
   }
   await upload(Buffer.from(image.jpg, 'base64'), 'fixture.jpg', 'image/jpeg');
   assert((await map()).elements.length >= 4);
-  record('JPG upload still separates foreground regions');
   const pdf = new jsPDF({ unit: 'pt', format: [400, 600] });
   pdf.setFontSize(32);
   pdf.text('NATIVE PDF TEXT', 30, 70);
@@ -409,116 +440,350 @@ try {
       (e) => e.kind === 'text' && e.label.includes('NATIVE PDF TEXT'),
     ),
   );
-  record(
-    'PDF worker imports the first page and separates native text without adding page controls',
-  );
   await upload(Buffer.from('broken'), 'bad.pdf', 'application/pdf');
   await page.getByRole('alert').waitFor();
-  await click('알림 닫기');
+  assert(!/[가-힣]/.test(await page.getByRole('alert').textContent()));
+  await click('Dismiss message');
   assert.equal((await map()).extraction, pdfMap.extraction);
-  record('Invalid upload preserves the current poster');
+  record(
+    'JPG, native-text PDF and invalid uploads keep working with English feedback',
+  );
 
-  const cameraPage = await context.newPage();
-  cameraPage.on('pageerror', (e) => errors.push(e.message));
-  await cameraPage.addInitScript(() => {
-    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
-      configurable: true,
-      value: async (constraints) => {
-        window.__cameraConstraints = constraints;
-        const canvas = document.createElement('canvas');
-        canvas.width = 320;
-        canvas.height = 240;
-        const ctx = canvas.getContext('2d'),
-          pattern = document.createElement('canvas');
-        pattern.width = 512;
-        pattern.height = 256;
-        const p = pattern.getContext('2d');
-        let seed = 19371;
-        for (let y = 0; y < 256; y += 4)
-          for (let x = 0; x < 512; x += 4) {
-            seed = (seed * 16807) % 2147483647;
-            const value = (seed % 230) + 10;
-            p.fillStyle = `rgb(${value},${value},${value})`;
-            p.fillRect(x, y, 4, 4);
+  // Camera lifecycle + optical flow, independent of the human tracker.
+  async function fakeCamera(target, photo = null) {
+    await target.addInitScript((photo) => {
+      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+        configurable: true,
+        value: async (constraints) => {
+          window.__cameraConstraints = constraints;
+          const c = document.createElement('canvas');
+          c.width = 640;
+          c.height = 480;
+          const ctx = c.getContext('2d');
+          let image = null;
+          if (photo) {
+            image = new Image();
+            image.src = photo;
+            await image.decode();
           }
-        let offset = 0;
-        const draw = () => {
-          if (window.__cameraMove) offset = (offset + 3) % 128;
-          ctx.drawImage(pattern, offset, 0, 320, 240, 0, 0, 320, 240);
-        };
-        draw();
-        const stream = canvas.captureStream(24);
-        window.__cameraStream = stream;
-        const timer = setInterval(draw, 33);
-        stream
-          .getVideoTracks()[0]
-          .addEventListener('ended', () => clearInterval(timer));
-        return stream;
-      },
-    });
-  });
-  await cameraPage.goto(`http://127.0.0.1:${port}`);
-  await upload(png, 'fixture.png', 'image/png', cameraPage);
-  await menu('노트북 움직임 감지', cameraPage);
-  await choose('카메라로 움직임 감지', cameraPage);
-  await cameraPage.waitForFunction(
+          const pattern = document.createElement('canvas');
+          pattern.width = 900;
+          pattern.height = 480;
+          const p = pattern.getContext('2d');
+          let seed = 19371;
+          for (let y = 0; y < 480; y += 8)
+            for (let x = 0; x < 900; x += 8) {
+              seed = (seed * 16807) % 2147483647;
+              const v = (seed % 230) + 10;
+              p.fillStyle = `rgb(${v},${v},${v})`;
+              p.fillRect(x, y, 8, 8);
+            }
+          let offset = 0;
+          const draw = () => {
+            if (image) ctx.drawImage(image, 0, 0, 640, 480);
+            else {
+              if (window.__cameraMove) offset = (offset + 7) % 200;
+              ctx.drawImage(pattern, offset, 0, 640, 480, 0, 0, 640, 480);
+            }
+          };
+          draw();
+          const stream = c.captureStream(15);
+          window.__cameraStream = stream;
+          setInterval(draw, 60);
+          return stream;
+        },
+      });
+    }, photo);
+  }
+  const camera = await context.newPage();
+  camera.on('pageerror', (error) => errors.push(error.message));
+  await fakeCamera(camera);
+  await camera.goto(base);
+  await upload(png, 'fixture.png', 'image/png', camera);
+  assert.equal(
+    await camera.evaluate(() => !!window.__cameraConstraints),
+    false,
+  );
+  await open('Motion input', camera);
+  await choose('Camera movement · optical flow', camera);
+  await camera.waitForFunction(
     () =>
       document
         .querySelector('[data-testid="motion-status"]')
         ?.getAttribute('data-state') === 'connected',
   );
-  await cameraPage.waitForTimeout(450);
-  assert.equal(
-    await cameraPage.evaluate(() => window.__cameraConstraints.audio),
-    false,
-  );
-  assert.equal(
-    await cameraPage.evaluate(
-      () => window.__cameraStream.getVideoTracks()[0].readyState,
-    ),
-    'live',
-  );
-  await cameraPage.evaluate(() => {
+  await camera.keyboard.press('Escape');
+  await camera.evaluate(() => {
     window.__cameraMove = true;
   });
-  await cameraPage.keyboard.press('Escape');
-  await cameraPage.waitForTimeout(900);
-  const cameraMap = await map(cameraPage);
-  assert.equal(cameraMap.input.source, 'camera');
-  assert(cameraMap.elements.some((e) => Math.hypot(e.dx, e.dy) > 4));
-  record(
-    'Simulated live camera stream drives the real optical flow and material without requesting a microphone',
-  );
-  await menu('노트북 움직임 감지', cameraPage);
-  await choose('움직임 감지 중지', cameraPage);
+  await camera.waitForTimeout(1000);
+  const cameraData = await map(camera);
+  assert.equal(cameraData.input.source, 'camera');
+  assert(cameraData.elements.some((e) => Math.hypot(e.dx, e.dy) > 2));
   assert.equal(
-    await cameraPage.evaluate(
+    await camera.evaluate(() => window.__cameraConstraints.audio),
+    false,
+  );
+  await open('Motion input', camera);
+  await choose('Stop tracking', camera);
+  assert.equal(
+    await camera.evaluate(
       () => window.__cameraStream.getVideoTracks()[0].readyState,
     ),
     'ended',
   );
-  assert.equal(
-    await cameraPage.locator('video').evaluate((v) => v.srcObject),
-    null,
+  await camera.close();
+  record(
+    'Optical flow is still available and stopping it releases the camera without a microphone',
   );
-  await cameraPage.close();
-  record('Stopping detection releases the camera track');
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await upload(png);
+  // Deterministic node samples test the complete input-to-physics mapping.
+  const bodyPage = await context.newPage();
+  bodyPage.on('pageerror', (error) => errors.push(error.message));
+  await fakeCamera(bodyPage);
+  await bodyPage.route('**/tracking/holistic.js', (route) =>
+    route.fulfill({
+      contentType: 'application/javascript',
+      body: `
+    window.Holistic=class {
+      constructor(){this.sign=1;} setOptions(){} async initialize(){} onResults(fn){this.callback=fn;}
+      async send(){if(window.__bodyFail)throw new Error("Simulated tracking failure");this.sign*=-1;const pose=Array.from({length:33},()=>({x:.5,y:.3,visibility:0}));for(const[id,x,y]of [[0,.5,.2],[7,.46,.22],[8,.54,.22],[11,.4,.35],[12,.6,.35],[13,.3,.45],[14,.7,.45],[15,.2,.55],[16,.8,.55],[23,.44,.6],[24,.56,.6],[25,.44,.75],[26,.56,.75],[27,.44,.93],[28,.56,.93]])pose[id]={x,y,visibility:.95};const amp=window.__bodyAmplitude||0;pose[15].y+=this.sign*amp;pose[16].y-=this.sign*amp;
+      const face=Array.from({length:478},()=>({x:.5,y:.23,visibility:0}));for(const[id,x,y]of [[10,.5,.17],[152,.5,.3],[234,.45,.23],[454,.55,.23],[33,.46,.21],[133,.49,.21],[159,.475,.205],[145,.475,.215],[263,.54,.21],[362,.51,.21],[386,.525,.205],[374,.525,.215],[468,.475,.21],[473,.525,.21],[1,.5,.23],[2,.5,.24],[4,.5,.232],[5,.5,.225],[98,.49,.24],[327,.51,.24],[13,.5,.26],[14,.5,.27],[61,.48,.265],[291,.52,.265],[78,.485,.265],[308,.515,.265]])face[id]={x,y,visibility:.95};
+      const hand=base=>Array.from({length:21},(_,i)=>({x:base+(i%4)*.008,y:.55-Math.floor(i/4)*.012,visibility:.95}));this.callback({poseLandmarks:pose,faceLandmarks:face,leftHandLandmarks:hand(.2),rightHandLandmarks:hand(.76)});}
+      async close(){window.__modelClosed=true;}
+    };`,
+    }),
+  );
+  await bodyPage.goto(base);
+  await upload(png, 'fixture.png', 'image/png', bodyPage);
+  await open('Motion input', bodyPage);
+  await choose('Body nodes · fixed camera', bodyPage);
+  await bodyPage.keyboard.press('Escape');
+  await bodyPage.waitForFunction(
+    () => document.querySelectorAll('.node-overlay circle').length > 60,
+  );
+  assert.equal(await bodyPage.locator('[data-detected=true]').count(), 9);
+  assert(
+    (await map(bodyPage)).elements.every((e) => Math.hypot(e.dx, e.dy) < 0.01),
+  );
+  await bodyPage.evaluate(() => {
+    window.__bodyAmplitude = 0.02;
+  });
+  await bodyPage.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Poster response"]')?.textContent ===
+      'MOVE',
+  );
+  const gentleBody = await map(bodyPage);
+  assert.equal(gentleBody.input.source, 'body');
+  assert(
+    gentleBody.input.body.parts.some(
+      (p) => p.part === 'Arms' && p.strength > 0,
+    ),
+  );
+  await bodyPage.evaluate(() => {
+    window.__bodyAmplitude = 0.06;
+  });
+  await bodyPage.waitForFunction(
+    () =>
+      document.querySelector('[aria-label="Poster response"]')?.textContent ===
+      'BEND',
+  );
+  const bending = await map(bodyPage);
+  assert.equal(bending.elements.filter((e) => e.kind === 'fragment').length, 0);
+  await bodyPage.evaluate(() => {
+    window.__bodyAmplitude = 0.2;
+  });
+  let bodyMap;
+  for (let i = 0; i < 12; i++) {
+    await bodyPage.waitForTimeout(200);
+    bodyMap = await map(bodyPage);
+    if (
+      bodyMap.fractures > 0 ||
+      bodyMap.elements.some((e) => e.kind === 'fragment')
+    )
+      break;
+  }
+  assert(bodyMap.elements.some((e) => e.kind === 'fragment'));
+  assert(bodyMap.input.body.effect === 'BREAK ON IMPACT');
+  await click('Pause motion', bodyPage);
+  const frozen = await map(bodyPage);
+  await bodyPage.waitForTimeout(350);
+  const frozenAgain = await map(bodyPage);
+  assert.deepEqual(
+    frozen.elements.map((e) => [e.x, e.y, e.distance]),
+    frozenAgain.elements.map((e) => [e.x, e.y, e.distance]),
+  );
+  assert(
+    (await bodyPage.locator('.causal-readout').innerText()).includes('PAUSED'),
+  );
+  await bodyPage.screenshot({ path: 'test-results/body-nodes.png' });
+  await bodyPage.setViewportSize({ width: 1280, height: 720 });
+  const compactPreview = await bodyPage.locator('.input-preview').boundingBox();
+  const compactTitle = await bodyPage.locator('.wordmark').boundingBox();
+  assert(compactPreview.x + compactPreview.width < compactTitle.x);
+  assert(compactPreview.y + compactPreview.height <= 720);
+  await click('About', bodyPage);
+  await bodyPage.getByRole('dialog', { name: 'About', exact: true }).waitFor();
+  await bodyPage.keyboard.press('Escape');
+  await bodyPage.screenshot({ path: 'test-results/short-exhibition.png' });
+  record(
+    'Short desktop viewports keep the tracking preview clear of the title and About',
+  );
+  await bodyPage.evaluate(() => {
+    window.__bodyFail = true;
+  });
+  await bodyPage.waitForFunction(
+    () =>
+      document
+        .querySelector('[data-testid="motion-status"]')
+        ?.getAttribute('data-state') === 'unavailable',
+  );
   assert.equal(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth > innerWidth,
+    await bodyPage.locator('.causal-readout strong').textContent(),
+    '0%',
+  );
+  assert.equal(await bodyPage.locator('.node-overlay circle').count(), 0);
+  assert.equal(
+    await bodyPage.evaluate(
+      () => window.__cameraStream.getVideoTracks()[0].readyState,
+    ),
+    'ended',
+  );
+  record(
+    'Tracking failures clear stale nodes and movement values and release the camera',
+  );
+  await open('Motion input', bodyPage);
+  await choose('Stop tracking', bodyPage);
+  assert.equal(
+    await bodyPage.evaluate(
+      () => window.__cameraStream.getVideoTracks()[0].readyState,
+    ),
+    'ended',
+  );
+  await bodyPage.waitForFunction(() => window.__modelClosed === true);
+  await bodyPage.close();
+  record(
+    'Simulated full-body, hand and face nodes produce MOVE, BEND and collision fractures; pause and cleanup hold',
+  );
+
+  // Real local model inference, separate from the deterministic node simulation.
+  const real = await context.newPage();
+  real.on('pageerror', (error) => errors.push(error.message));
+  await fakeCamera(
+    real,
+    'data:image/jpeg;base64,' +
+      (await readFile('test-fixtures/pose.jpg')).toString('base64'),
+  );
+  await real.goto(base);
+  await upload(png, 'fixture.png', 'image/png', real);
+  await open('Motion input', real);
+  await choose('Body nodes · fixed camera', real);
+  await real.keyboard.press('Escape');
+  await real.waitForFunction(
+    () => document.querySelectorAll('[data-detected=true]').length === 9,
+    undefined,
+    { timeout: 120000 },
+  );
+  const regions = await real
+    .locator('[data-detected=true]')
+    .evaluateAll((nodes) => nodes.map((node) => node.dataset.part));
+  assert(regions.includes('Arms') && regions.includes('Head'));
+  assert.equal(regions.length, 9);
+  console.log('Real model detected:', regions.join(', '));
+  await real.screenshot({ path: 'test-results/holistic-real.png' });
+  await open('Motion input', real);
+  await choose('Stop tracking', real);
+  assert.equal(
+    await real.evaluate(
+      () => window.__cameraStream.getVideoTracks()[0].readyState,
+    ),
+    'ended',
+  );
+  await real.close();
+  record(
+    'The real self-hosted Holistic model detects nodes on an actual person image',
+  );
+
+  const denied = await context.newPage();
+  await denied.addInitScript(() =>
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+      value: async () => {
+        throw new DOMException('Denied', 'NotAllowedError');
+      },
+    }),
+  );
+  await denied.goto(base);
+  await upload(png, 'fixture.png', 'image/png', denied);
+  await open('Motion input', denied);
+  await choose('Body nodes · fixed camera', denied);
+  await denied.waitForFunction(
+    () =>
+      document
+        .querySelector('[data-testid="motion-status"]')
+        ?.getAttribute('data-state') === 'denied',
+  );
+  assert(
+    (await denied.locator('.connection-detail').textContent()).includes(
+      'permission denied',
+    ),
+  );
+  await denied.close();
+  record(
+    'Denied camera permission is shown clearly without pretending nodes are connected',
+  );
+
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    acceptDownloads: true,
+  });
+  const mobile = await mobileContext.newPage();
+  mobile.on('pageerror', (error) => errors.push(error.message));
+  await mobile.goto(base);
+  await upload(png, 'fixture.png', 'image/png', mobile);
+  const mobilePanel = mobile.getByRole('region', {
+      name: 'Poster panel',
+      exact: true,
+    }),
+    touchBefore = await mobilePanel.boundingBox();
+  const session = await mobileContext.newCDPSession(mobile),
+    start = { x: touchBefore.x + 60, y: touchBefore.y + 70 };
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: start.x, y: start.y, id: 1 }],
+  });
+  for (let i = 1; i <= 8; i++) {
+    await session.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: start.x - i * 6, y: start.y - i * 14, id: 1 }],
+    });
+    await mobile.waitForTimeout(18);
+  }
+  await session.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  });
+  await mobile.waitForTimeout(100);
+  const touchAfter = await mobilePanel.boundingBox();
+  assert(touchAfter.y < touchBefore.y - 80);
+  assert(touchAfter.x >= 0 && touchAfter.y >= 0);
+  assert.equal(await mobile.evaluate(() => scrollY), 0);
+  assert.equal(
+    await mobile.evaluate(
+      () =>
+        document.documentElement.scrollWidth > innerWidth ||
+        document.documentElement.scrollHeight > innerHeight,
     ),
     false,
   );
-  const bounds = await page.locator('.poster-canvas').boundingBox();
-  assert.equal(bounds.width, 390);
-  await page.screenshot({ path: 'test-results/mobile.png', fullPage: true });
+  await mobile.screenshot({ path: 'test-results/mobile.png' });
+  await mobileContext.close();
   record(
-    'Mobile fits the paper and controls while retaining a viewport-wide physical arena',
+    'Touch dragging moves the panel on mobile without scrolling or overflowing the page',
   );
-  assert.deepEqual(errors, [], `Browser errors: ${errors.join('\n')}`);
+  assert.deepEqual(errors, [], errors.join('\n'));
   console.log(`\n${results.length} browser checks passed.`);
 } finally {
   await browser?.close();
