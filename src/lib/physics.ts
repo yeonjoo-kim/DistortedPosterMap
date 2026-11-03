@@ -38,6 +38,7 @@ interface Entity {
   areaWeight: number;
   parentId?: string;
   sourceMap?: {
+    parent: Entity;
     clipX: number;
     clipY: number;
     pad: number;
@@ -90,6 +91,7 @@ export class PosterPhysics {
   private peakAge = 0;
 
   constructor(asset: PosterAsset, settings: Settings) {
+    this.engine.gravity.y = 0;
     this.asset = asset;
     this.settings = { ...settings };
     const { width: w, height: h } = asset;
@@ -100,7 +102,7 @@ export class PosterPhysics {
         element.y,
         Math.max(3, element.width - 2),
         Math.max(3, element.height - 2),
-        { friction: 0.65, frictionAir: 0.035, restitution: 0.05 },
+        { friction: 0.1, frictionAir: 0.004, restitution: 0.75 },
       );
       Matter.Body.setStatic(body, true);
       this.entities.push({
@@ -119,7 +121,7 @@ export class PosterPhysics {
         scaleX: 1,
         scaleY: 1,
         strain: 0,
-        areaWeight: element.width * element.height,
+        areaWeight: element.pixelArea ?? element.width * element.height,
         releaseThreshold:
           0.035 +
           (((index * 7) % Math.max(1, asset.elements.length)) /
@@ -161,7 +163,6 @@ export class PosterPhysics {
               impact * impact * (0.1 + this.peak * MATERIAL_MIX.fracture),
           );
           if (
-            !entity.parentId &&
             materialResponse(this.peak).canFracture &&
             this.peak >= this.fractureThreshold &&
             this.peakAge < 2.8 &&
@@ -213,7 +214,7 @@ export class PosterPhysics {
     this.fixtures = items.map(({ id, x, y, width, height }) => {
       const body = Matter.Bodies.rectangle(x, y, width, height, {
         friction: 0.5,
-        frictionAir: 0.07,
+        frictionAir: 0.012,
         restitution: 0.08,
       });
       Matter.Body.setStatic(body, true);
@@ -231,6 +232,19 @@ export class PosterPhysics {
     this.draggingFixtures.add(id);
     Matter.Body.setStatic(fixture.body, true);
     return { ...fixture.body.position };
+  }
+  resizeFixture(id: string, box: { x: number; y: number; width: number; height: number }) {
+    const fixture = this.fixtures.find((item) => item.id === id);
+    if (!fixture) return;
+    const offset = Matter.Vector.sub(fixture.body.position, fixture.origin);
+    const angle = fixture.body.angle;
+    Matter.Body.setAngle(fixture.body, 0);
+    Matter.Body.scale(fixture.body, box.width / fixture.width, box.height / fixture.height);
+    Matter.Body.setAngle(fixture.body, angle);
+    fixture.width = box.width;
+    fixture.height = box.height;
+    fixture.origin = { x: box.x, y: box.y };
+    Matter.Body.setPosition(fixture.body, { x: box.x + offset.x, y: box.y + offset.y });
   }
   moveFixture(id: string, position: Point) {
     const fixture = this.fixtures.find((item) => item.id === id);
@@ -257,7 +271,7 @@ export class PosterPhysics {
   }
 
   applyMotion(sample: MotionSample) {
-    if (this.settings.paused || this.settings.original) return;
+    if (this.settings.paused || this.settings.original || sample.confidence <= 0) return;
     if (sample.source !== this.lastInput?.source) {
       this.peak = 0;
       this.peakAge = 0;
@@ -270,7 +284,7 @@ export class PosterPhysics {
   shake(amplitude = 0.55, direction: Point = { x: 0.85, y: -0.95 }) {
     if (this.settings.paused || this.settings.original) return;
     const strength = shakeImpulse(amplitude);
-    if (strength < 0.012) return;
+    if (strength < 0.08) return;
     this.active = true;
     this.energy = Math.max(this.energy, strength);
     if (strength > this.peak || this.peakAge > 1.8) {
@@ -297,12 +311,9 @@ export class PosterPhysics {
     }
     for (const entity of this.entities) {
       entity.strain += strength * 0.52;
-      if (
-        entity.body.isStatic &&
-        strength < 0.72 &&
-        entity.strain < entity.releaseThreshold
-      )
-        continue;
+      entity.damage = Math.min(1, entity.damage + strength * strength * 0.035);
+      if (entity.damage >= 1 || (strength >= this.fractureThreshold && entity.damage >= 0.2))
+        this.toBreak.add(entity);
       Matter.Body.setStatic(entity.body, false);
       Matter.Sleeping.set(entity.body, false);
       entity.body.restitution = profile.restitution;
@@ -350,8 +361,20 @@ export class PosterPhysics {
     this.impactEnergy *= Math.exp(-dt * 4);
     this.peakAge += dt;
     if (!this.active) return;
-    this.engine.gravity.y = materialResponse(this.energy).gravity;
+    this.engine.gravity.y = 0;
+    // A weak circulating current keeps released pieces suspended without a downwards bias.
+    for (const [i, entity] of this.entities.entries()) {
+      if (entity.body.isStatic) continue;
+      const phase = this.frame * 0.006 + i * 2.399;
+      Matter.Body.applyForce(entity.body, entity.body.position, {
+        x: Math.cos(phase) * entity.body.mass * 0.000006,
+        y: Math.sin(phase) * entity.body.mass * 0.000006,
+      });
+    }
     Matter.Engine.update(this.engine, Math.max(0.1, dt * 1000));
+    // Dense fragments can briefly overwhelm the collision solver. Keep controls
+    // fully reachable even during those frames.
+    for (const fixture of this.fixtures) this.moveFixture(fixture.id, fixture.body.position);
     // Count every physics step, independently of the sampled drawing trail.
     for (const entity of this.entities) {
       const position = entity.body.position;
@@ -363,9 +386,9 @@ export class PosterPhysics {
       entity.previousPosition = { ...position };
     }
     this.frame++;
-    if (this.entities.length < 220)
-      for (const entity of [...this.toBreak].slice(0, 6)) {
-        if (this.entities.length + 3 > 220) break;
+    if (this.entities.length < 650)
+      for (const entity of [...this.toBreak].filter((entity) => this.canSplit(entity)).slice(0, 6)) {
+        if (this.entities.length + 3 > 650) break;
         this.fracture(entity);
       }
     this.toBreak.clear();
@@ -442,8 +465,14 @@ export class PosterPhysics {
     }
   }
 
+  private canSplit(entity: Entity) {
+    return this.entities.includes(entity) && entity.element.width >= 16 &&
+      entity.element.height >= 12 && entity.areaWeight >= 90 &&
+      entity.element.id.split('.').length <= 5;
+  }
+
   private fracture(entity: Entity) {
-    if (!this.entities.includes(entity) || entity.parentId) return;
+    if (!this.canSplit(entity)) return;
     const { element: el, body } = entity;
     const pad = Math.ceil(entity.warp + 2);
     const texture = canvas(
@@ -455,16 +484,10 @@ export class PosterPhysics {
     const strip = Math.max(1, Math.ceil(el.height / 70));
     for (let y = 0; y < el.height; y += strip) {
       const h = Math.min(strip, el.height - y);
+      const sourceY = Math.max(0, y - 0.75), sourceH = Math.min(el.height, y + h + 0.75) - sourceY;
       textureCtx.drawImage(
-        el.sprite,
-        0,
-        y,
-        el.width,
-        h,
-        pad + clayOffset(y, el.height, entity.warp, entity.sharpness),
-        y,
-        el.width,
-        h,
+        el.sprite, 0, sourceY, el.width, sourceH,
+        pad + clayOffset(y, el.height, entity.warp, entity.sharpness), sourceY, el.width, sourceH,
       );
     }
     const parentAnchor = {
@@ -499,6 +522,10 @@ export class PosterPhysics {
       ctx.closePath();
       ctx.clip();
       ctx.drawImage(texture, -minX, -minY);
+      const alpha = ctx.getImageData(0, 0, sprite.width, sprite.height).data;
+      let visibleArea = 0;
+      for (let p = 3; p < alpha.length; p += 4) visibleArea += alpha[p] / 255;
+      if (visibleArea < 1) continue;
       const centroid = {
         x: points.reduce((s, p) => s + p.x, 0) / 3,
         y: points.reduce((s, p) => s + p.y, 0) / 3,
@@ -533,7 +560,7 @@ export class PosterPhysics {
         [points],
         {
           friction: 0.35,
-          frictionAir: 0.025,
+          frictionAir: 0.004,
           restitution: materialResponse(this.energy).restitution,
         },
       );
@@ -569,20 +596,15 @@ export class PosterPhysics {
         warp: 0,
         sharpness: entity.sharpness,
         compression: 0,
-        damage: entity.damage * 0.5,
+        damage: 0,
         scaleX: 1,
         scaleY: 1,
         strain: 1,
         releaseThreshold: 0,
-        areaWeight:
-          (entity.areaWeight *
-            Math.abs(
-              (points[1].x - points[0].x) * (points[2].y - points[0].y) -
-                (points[2].x - points[0].x) * (points[1].y - points[0].y),
-            )) /
-          (2 * texture.width * texture.height),
+        areaWeight: visibleArea,
         parentId: el.id,
         sourceMap: {
+          parent: entity,
           clipX: minX,
           clipY: minY,
           pad,
@@ -596,6 +618,9 @@ export class PosterPhysics {
         },
       });
     }
+    if (fragments.length < 2) { entity.damage = 0; return; }
+    const totalArea = fragments.reduce((sum, fragment) => sum + fragment.areaWeight, 0);
+    fragments.forEach((fragment) => { fragment.areaWeight *= entity.areaWeight / totalArea; });
     this.completedTrails.push({
       id: el.id,
       trailColor: entity.trailColor,
@@ -622,12 +647,11 @@ export class PosterPhysics {
   }
 
   render(ctx: CanvasRenderingContext2D, overlays = true) {
-    const { width, height } = this.asset;
-    ctx.clearRect(0, 0, width, height);
     if (this.settings.original) {
       ctx.drawImage(this.asset.source, 0, 0);
       return;
     }
+    if (overlays && this.active) this.drawTracking(ctx);
     if (!this.active && !this.selected) ctx.drawImage(this.asset.source, 0, 0);
     else {
       ctx.drawImage(this.asset.background, 0, 0);
@@ -641,24 +665,19 @@ export class PosterPhysics {
           const strip = Math.max(1, Math.ceil(el.height / 70));
           for (let y = 0; y < el.height; y += strip) {
             const h = Math.min(strip, el.height - y);
+            // Overlap sampling strips to prevent antialiased seams when rotated/scaled.
+            const sourceY = Math.max(0, y - 0.75), sourceH = Math.min(el.height, y + h + 0.75) - sourceY;
             ctx.drawImage(
-              el.sprite,
-              0,
-              y,
-              el.width,
-              h,
+              el.sprite, 0, sourceY, el.width, sourceH,
               -anchor.x + clayOffset(y, el.height, warp, entity.sharpness),
-              y - anchor.y,
-              el.width,
-              h,
+              sourceY - anchor.y, el.width, sourceH,
             );
           }
         } else ctx.drawImage(el.sprite, -anchor.x, -anchor.y);
         ctx.restore();
       }
     }
-    if (!overlays) return;
-    this.drawTracking(ctx);
+
   }
 
   private drawTracking(ctx: CanvasRenderingContext2D) {
@@ -926,10 +945,7 @@ export class PosterPhysics {
       (map.clipX + x) / map.scaleX -
       map.pad -
       clayOffset(sourceY, map.height, map.warp, map.sharpness);
-    return {
-      x: map.origin.x + sourceX - map.anchor.x,
-      y: map.origin.y + sourceY - map.anchor.y,
-    };
+    return this.sourcePoint(map.parent, sourceX, sourceY);
   }
 
   deformationPoints(id: string) {
@@ -972,7 +988,7 @@ export class PosterPhysics {
     return {
       version: 2,
       material:
-        'damp clay — gravity, plastic deformation and collision fracture',
+        'floating material — accumulated motion and repeated fracture',
       materialMix: MATERIAL_MIX,
       bounds: { ...this.bounds },
       fixtures: this.fixtures.map(({ id, body, width, height }) => ({

@@ -57,7 +57,7 @@ describe('physical workflow', () => {
     expect(physics.telemetry()).toEqual(before);
     physics.dispose();
   });
-  it('combines gravity, warping and recoverable collision compression without selecting a mode', () => {
+  it('combines suspension, warping and recoverable collision compression without selecting a mode', () => {
     const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
     physics.shake(0.4, { x: 0.2, y: 1 });
     const body = physics.entities[0].body;
@@ -68,7 +68,7 @@ describe('physical workflow', () => {
     expect(hit.warp).toBeGreaterThan(0);
     expect(hit.compression).toBeGreaterThan(0.05);
     expect(hit.scaleY).toBeLessThan(1);
-    expect(physics.engine.gravity.y).toBeGreaterThan(0);
+    expect(physics.engine.gravity.y).toBe(0);
     expect(physics.entities).toHaveLength(1);
     for (let i = 0; i < 40; i++) physics.update(1000 / 60);
     expect(physics.telemetry().elements[0].compression).toBeLessThan(
@@ -81,6 +81,18 @@ describe('physical workflow', () => {
           (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
         ),
     ).toBe(true);
+    physics.dispose();
+  });
+  it('keeps the original composition intact indefinitely without measured motion', () => {
+    const physics = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
+    const before = physics.telemetry();
+    for (let i = 0; i < 600; i++) {
+      physics.applyMotion({ source: 'body', strength: 0, magnitude: 0, confidence: 1, direction: { x: 0, y: 0 } });
+      physics.update(1000 / 60);
+    }
+    expect(physics.telemetry()).toEqual(before);
+    physics.applyMotion({ source: 'body', strength: 1, magnitude: 1, confidence: 0, direction: { x: 1, y: 1 } });
+    expect(physics.active).toBe(false);
     physics.dispose();
   });
   it('keeps gentle repeated input within a small warp envelope', () => {

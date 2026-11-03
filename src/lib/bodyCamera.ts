@@ -55,7 +55,8 @@ export async function startBodyCamera(
     previousAt = 0,
     lastFrame = -1,
     lastTick = 0,
-    lastStatus = 0;
+    lastStatus = 0,
+    detectedAt = 0;
   const close = () => {
     if (!detector || busy) {
       closePending = true;
@@ -122,7 +123,11 @@ export async function startBodyCamera(
       const sample = bodyMotion(previous, points, (now - previousAt) / 1000);
       previous = sample.confidence > 0 ? points : null;
       previousAt = now;
-      onSample(sample);
+      if (sample.confidence > 0 && !detectedAt) detectedAt = now;
+      if (!sample.confidence) detectedAt = 0;
+      onSample(!detectedAt || now - detectedAt < 800
+        ? { ...sample, strength: 0, direction: { x: 0, y: 0 } }
+        : sample);
       if (now - lastStatus > 800) {
         lastStatus = now;
         onStatus({

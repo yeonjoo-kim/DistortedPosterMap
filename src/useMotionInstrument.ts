@@ -18,7 +18,7 @@ export function useMotionInstrument(
   );
   const [status, setStatus] = useState<InputStatus>({
     state: 'idle',
-    message: 'Choose body nodes, camera motion or a device sensor.',
+    message: 'Choose body nodes or a device motion sensor.',
   });
   const [sample, setSample] = useState<MotionSample | null>(null);
   const [sound, setSound] = useState<
@@ -28,6 +28,7 @@ export function useMotionInstrument(
   const audio = useRef(new PosterInstrument());
   const controller = useRef<AbortController | null>(null);
   const lastUi = useRef(0);
+  const startingMotion = useRef(0);
   const performing = useRef(false);
   const soundRef = useRef(sound);
   soundRef.current = sound;
@@ -53,7 +54,12 @@ export function useMotionInstrument(
           ? { ...raw, strength: 0, direction: { x: 0, y: 0 } }
           : raw;
       performing.current = value.confidence > 0;
-      if (!settings.current.paused && !settings.current.original)
+      // Require sustained measured movement before releasing the initial poster.
+      if (!engine.current?.active && value.source === 'body') {
+        startingMotion.current = value.strength >= 0.12 && value.confidence > 0 ? startingMotion.current + 1 : 0;
+      }
+      if (!settings.current.paused && !settings.current.original &&
+        (engine.current?.active || value.source !== 'body' || startingMotion.current >= 2))
         engine.current?.applyMotion(value);
       const now = performance.now();
       if (now - lastUi.current > 95 || value.source === 'test') {
@@ -86,6 +92,7 @@ export function useMotionInstrument(
       controller.current = control;
       setSource(next);
       setSample(null);
+      startingMotion.current = 0;
       if (soundRef.current !== 'muted') void unlockSound();
       const onStatus = (value: InputStatus) => {
         if (!control.signal.aborted) {

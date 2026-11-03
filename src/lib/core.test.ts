@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { connectedRegions, dilate } from './segmentation';
+import { connectedRegions, dilate, colorRegions } from './segmentation';
 import { shakeImpulse, zigzagOffset } from './math';
 
 describe('foreground separation', () => {
@@ -58,5 +58,32 @@ describe('proportional physical input', () => {
     ]);
     expect(zigzagOffset(12.5, 100, 10)).toBe(0);
     expect(zigzagOffset(25, 100, 20)).toBe(2 * zigzagOffset(25, 100, 10));
+  });
+});
+
+
+describe('color and boundary separation', () => {
+  it('separates touching colors, individual glyphs and the background with exact pixel coverage', () => {
+    const w = 40, h = 30, pixels = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const ink = y > 5 && y < 20 && (x > 5 && x < 10 || x > 15 && x < 20);
+      pixels.set(ink ? [0, 0, 0, 255] : x > 25 ? [255, 0, 0, 255] : [255, 255, 255, 255], i);
+    }
+    const { regions, labels } = colorRegions(pixels, w, h, 12);
+    expect(labels[10 * w + 7]).not.toBe(labels[10 * w + 17]);
+    expect(labels[10 * w + 24]).not.toBe(labels[10 * w + 26]);
+    expect(regions.reduce((n, r) => n + r.count, 0)).toBe(w * h);
+    expect([...labels].every((id) => id > 0)).toBe(true);
+    expect(regions.length).toBeGreaterThan(4);
+  });
+  it('leaves transparent pixels transparent and preserves isolated opaque islands', () => {
+    const pixels = new Uint8ClampedArray(100 * 4);
+    pixels.set([10, 20, 30, 255], 0);
+    pixels.set([250, 200, 150, 255], 99 * 4);
+    const result = colorRegions(pixels, 10, 10);
+    expect(result.labels[0]).not.toBe(result.labels[99]);
+    expect(result.labels[1]).toBe(0);
+    expect(result.regions.reduce((n, r) => n + r.count, 0)).toBe(2);
   });
 });

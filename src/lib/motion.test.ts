@@ -152,7 +152,8 @@ describe('continuous material and instrument response', () => {
   it('makes a stronger measured input both more deformable and capable of fracturing', () => {
     const soft = materialResponse(0.15),
       hard = materialResponse(0.85);
-    expect(hard.gravity).toBeGreaterThan(soft.gravity);
+    expect(hard.gravity).toBe(0);
+    expect(soft.gravity).toBe(0);
     expect(hard.restitution).toBeGreaterThan(soft.restitution);
     expect(soft.canFracture).toBe(false);
     expect(hard.canFracture).toBe(true);

@@ -4,15 +4,14 @@ import { createPortal } from 'react-dom';
 import {
   Camera,
   Grip,
-  Maximize2,
-  Minimize2,
   Pause,
   Play,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import { loadPoster } from './lib/extract';
-import { exportMap, exportPoster } from './lib/export';
+import { CropDialog } from './CropDialog';
+import { extractElements, loadPoster } from './lib/extract';
+import { exportPoster } from './lib/export';
 import { PosterPhysics } from './lib/physics';
 import { BODY_LINKS, PART_COLORS } from './lib/body';
 import { DEFAULT_SETTINGS } from './lib/types';
@@ -35,7 +34,9 @@ export default function App() {
     [saving, setSaving] = useState(false),
     [notice, setNotice] = useState('');
   const [about, setAbout] = useState(false),
-    [expanded, setExpanded] = useState(false),
+    [showNodes, setShowNodes] = useState(true),
+    [showReadings, setShowReadings] = useState(true),
+    [chooseInput, setChooseInput] = useState(false),
     [isDragging, setIsDragging] = useState(false);
   const [settings, setSettings] = useState<Settings>({ ...DEFAULT_SETTINGS }),
     [telemetry, setTelemetry] = useState(empty);
@@ -44,6 +45,8 @@ export default function App() {
   const [menuPosition, setMenuPosition] = useState({ left: 12, top: 12 }),
     [dropActive, setDropActive] = useState(false),
     [videoRatio, setVideoRatio] = useState(4 / 3);
+  const [pendingPoster, setPendingPoster] = useState<{ asset: PosterAsset; name: string } | null>(null);
+  const previewRef = useRef<HTMLElement>(null), uploadRef = useRef<HTMLButtonElement>(null);
   const fileRef = useRef<HTMLInputElement>(null),
     canvasRef = useRef<HTMLCanvasElement>(null),
     paperRef = useRef<HTMLDivElement>(null);
@@ -116,14 +119,14 @@ export default function App() {
         height: innerHeight / scale,
       });
       engine.setFixtures(
-        [wordmarkRef.current, aboutRef.current, panelRef.current].flatMap(
+        [wordmarkRef.current, aboutRef.current, panelRef.current, previewRef.current, uploadRef.current].flatMap(
           (node, i) => {
             if (!node) return [];
             node.style.transform = '';
             const box = node.getBoundingClientRect();
             return [
               {
-                id: ['wordmark', 'about', 'adjust-box'][i],
+                id: ['wordmark', 'about', 'adjust-box', 'camera-preview', 'restart'][i],
                 x: (box.left + box.width / 2 - paper.left) / scale,
                 y: (box.top + box.height / 2 - paper.top) / scale,
                 width: box.width / scale,
@@ -138,6 +141,23 @@ export default function App() {
     };
     layout();
     window.addEventListener('resize', layout);
+    // Status, toggles and the alternate font can resize controls during a performance.
+    const fixtureObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const node = entry.target as HTMLElement;
+        const transform = node.style.transform;
+        node.style.transform = '';
+        const box = node.getBoundingClientRect(), { left, top, scale } = projection.current;
+        node.style.transform = transform;
+        engine.resizeFixture(node === previewRef.current ? 'camera-preview' : 'adjust-box', {
+          x: (box.left + box.width / 2 - left) / scale,
+          y: (box.top + box.height / 2 - top) / scale,
+          width: box.width / scale, height: box.height / scale,
+        });
+      }
+    });
+    if (previewRef.current) fixtureObserver.observe(previewRef.current);
+    if (panelRef.current) fixtureObserver.observe(panelRef.current);
     let frame = 0,
       last = performance.now(),
       lastUi = 0,
@@ -159,7 +179,7 @@ export default function App() {
         top * ratio,
       );
       engine.render(ctx);
-      [wordmarkRef.current, aboutRef.current, panelRef.current].forEach(
+      [wordmarkRef.current, aboutRef.current, panelRef.current, previewRef.current, uploadRef.current].forEach(
         (node, i) => {
           const fixture = engine.fixtures[i];
           if (node && fixture)
@@ -180,8 +200,9 @@ export default function App() {
     frame = requestAnimationFrame(render);
     return () => {
       cancelAnimationFrame(frame);
+      fixtureObserver.disconnect();
       window.removeEventListener('resize', layout);
-      [wordmarkRef.current, aboutRef.current, panelRef.current].forEach(
+      [wordmarkRef.current, aboutRef.current, panelRef.current, previewRef.current, uploadRef.current].forEach(
         (node) => {
           if (node) node.style.transform = '';
         },
@@ -230,11 +251,10 @@ export default function App() {
     };
   }, [menu]);
   useEffect(() => {
-    if (!about && !expanded) return;
+    if (!about) return;
     const keyboard = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setAbout(false);
-        setExpanded(false);
       }
       if (about && event.key === 'Tab') {
         event.preventDefault();
@@ -245,7 +265,7 @@ export default function App() {
     };
     window.addEventListener('keydown', keyboard);
     return () => window.removeEventListener('keydown', keyboard);
-  }, [about, expanded]);
+  }, [about]);
 
   async function upload(file?: File) {
     if (!file) return;
@@ -257,12 +277,7 @@ export default function App() {
     try {
       const next = await loadPoster(file, 'normal');
       if (id !== loadId.current) return;
-      panelPlaced.current = false;
-      setTelemetry(empty);
-      setRecentBreak(false);
-      setAsset(next);
-      setName(file.name);
-      setSettings((s) => ({ ...s, paused: false }));
+      setPendingPoster({ asset: next, name: file.name });
     } catch (error) {
       if (id === loadId.current)
         setNotice(
@@ -274,15 +289,33 @@ export default function App() {
       if (id === loadId.current) setLoading(false);
     }
   }
-  async function download(format: 'png' | 'jpg' | 'pdf' | 'json') {
+  function useCrop(source: HTMLCanvasElement) {
+    if (!pendingPoster) return;
+    const next = extractElements(source, 'normal');
+    next.pageCount = pendingPoster.asset.pageCount;
+    panelPlaced.current = false;
+    setTelemetry(empty);
+    setRecentBreak(false);
+    setName(pendingPoster.name);
+    setAsset(next);
+    setPendingPoster(null);
+    setSettings((s) => ({ ...s, paused: false }));
+  }
+  useEffect(() => {
+    if (!asset) return;
+    const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && matchMedia('(pointer: coarse)').matches);
+    if (mobile) setChooseInput(true);
+    else input.startInput('body');
+  }, [asset, input.startInput]);
+  async function download(format: 'jpg' | 'pdf') {
     const engine = engineRef.current;
     if (!engine) return;
     setMenu(null);
     setSaving(true);
     setNotice('');
     try {
-      if (format === 'json') exportMap(engine, name);
-      else await exportPoster(engine, format, name, settings.showPaths, 2);
+      await exportPoster(engine, format, name, settings.showPaths, 2);
     } catch {
       setNotice('Unable to export this poster. Please try again.');
     } finally {
@@ -364,7 +397,7 @@ export default function App() {
           ? 'MOVE'
           : strength < 0.5
             ? 'BEND'
-            : 'BREAK ON IMPACT';
+            : 'BREAK';
   const isSettling =
     telemetry.energy > 0.02 ||
     telemetry.impact > 0.02 ||
@@ -375,12 +408,11 @@ export default function App() {
       ? 'FRACTURED'
       : effect === 'REST'
         ? isSettling
-          ? 'SETTLING'
+          ? 'FLOATING'
           : 'STILL'
         : effect;
   const body = input.sample?.body,
     nodes = new Map(body?.nodes.map((node) => [node.id, node]) ?? []);
-  const breakAt = input.source === 'body' ? 65 : 50;
   return (
     <main
       className={`studio ${asset ? 'has-poster' : 'is-empty'} ${telemetry.active ? 'is-distorting' : ''}`}
@@ -439,6 +471,7 @@ export default function App() {
           aria-busy={loading}
         >
           <button
+            ref={uploadRef}
             className={`upload-button ${asset ? 'replace-upload' : ''}`}
             aria-label="Upload poster"
             title="Upload PDF, JPG or PNG"
@@ -466,22 +499,22 @@ export default function App() {
       {asset && (
         <>
           <aside
-            className={`input-preview ${expanded ? 'expanded' : ''}`}
+            ref={previewRef}
+            className="input-preview"
+            onPointerEnter={() => engineRef.current?.beginFixtureDrag('camera-preview')}
+            onPointerLeave={() => engineRef.current?.endFixtureDrag('camera-preview')}
             aria-label="Motion input"
             style={{ '--video-ratio': videoRatio } as CSSProperties}
+            data-source={input.source}
             data-testid="motion-status"
             data-state={input.status.state}
           >
             <div className="input-heading">
               <span>{sourceName}</span>
-              <button
-                aria-label={
-                  expanded ? 'Shrink tracking view' : 'Expand tracking view'
-                }
-                onClick={() => setExpanded(!expanded)}
-              >
-                {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
+              <div className="preview-toggles">
+                <button aria-label="Show body nodes" aria-pressed={showNodes} onClick={() => setShowNodes(!showNodes)}>Nodes {showNodes ? 'ON' : 'OFF'}</button>
+                <button aria-label="Show motion readings" aria-pressed={showReadings} onClick={() => setShowReadings(!showReadings)}>Data {showReadings ? 'ON' : 'OFF'}</button>
+              </div>
             </div>
             <div className="video-window" style={{ aspectRatio: videoRatio }}>
               <video
@@ -503,7 +536,7 @@ export default function App() {
                 }
                 aria-label="Camera preview"
               />
-              {input.source === 'body' && body && (
+              {showNodes && input.source === 'body' && body && (
                 <svg
                   className="node-overlay"
                   viewBox="0 0 1 1"
@@ -551,23 +584,15 @@ export default function App() {
               )}
             </div>
             <div className="input-feedback" data-effect={result}>
-              <div className="causal-readout">
+              {showReadings && <div className="causal-readout">
                 <span>
                   {body?.dominant ?? (connected ? 'Motion' : 'Input')}{' '}
                   <strong>{percent}%</strong>
                 </span>
                 <span aria-hidden="true">→</span>
                 <output aria-label="Poster response">{result}</output>
-              </div>
-              <div className="input-meter">
-                <i style={{ width: `${percent}%` }} />
-              </div>
-              <div className="response-scale">
-                <span>Move 8–34%</span>
-                <span>Bend 35–{breakAt - 1}%</span>
-                <span>Break ≥{breakAt}%</span>
-              </div>
-              {input.source === 'body' && (
+              </div>}
+              {showReadings && input.source === 'body' && (
                 <div className="part-presence" aria-label="Detected body parts">
                   {Object.keys(PART_COLORS).map((part) => {
                     const reading = body?.parts.find(
@@ -602,12 +627,6 @@ export default function App() {
               <p className="input-message" role="status">
                 {input.status.message}
               </p>
-              {connected && (
-                <p className="output-count">
-                  {telemetry.elements.length} pieces · {telemetry.fragments}{' '}
-                  fragments · break occurs on collision
-                </p>
-              )}
             </div>
           </aside>
           <div
@@ -758,15 +777,13 @@ export default function App() {
           >
             {menu === 'download' ? (
               <div className="popover" role="menu" aria-label="Download format">
-                {(['png', 'jpg', 'pdf', 'json'] as const).map((format) => (
+                {(['jpg', 'pdf'] as const).map((format) => (
                   <button
                     role="menuitem"
                     key={format}
                     onClick={() => void download(format)}
                   >
-                    {format === 'json'
-                      ? 'Coordinates & paths · JSON'
-                      : format.toUpperCase()}
+                    {format.toUpperCase()}
                   </button>
                 ))}
               </div>
@@ -781,12 +798,6 @@ export default function App() {
                   onClick={() => input.startInput('body')}
                 >
                   Body nodes · fixed camera
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => input.startInput('camera')}
-                >
-                  Camera movement · optical flow
                 </button>
                 <button
                   role="menuitem"
@@ -811,6 +822,15 @@ export default function App() {
           </div>,
           document.body,
         )}
+      {pendingPoster && <CropDialog key={pendingPoster.name + loadId.current} source={pendingPoster.asset.source} onApply={useCrop} onCancel={() => setPendingPoster(null)} />}
+      {chooseInput && <div className="about-backdrop">
+        <section className="about-dialog input-choice" role="dialog" aria-modal="true" aria-label="Choose motion input">
+          <h1>How will you move?</h1>
+          <p>Use your body in front of the camera, or move your device.</p>
+          <button autoFocus className="download-button" onClick={() => { setChooseInput(false); input.startInput('body'); }}>Body nodes · camera</button>
+          <button className="download-button" onClick={() => { setChooseInput(false); input.startInput('sensor'); }}>Device motion sensor</button>
+        </section>
+      </div>}
       {about && (
         <div className="about-backdrop" onClick={() => setAbout(false)}>
           <div
@@ -829,50 +849,16 @@ export default function App() {
               ×
             </button>
             <h1>Poster Distorting Map</h1>
-            <p>
-              Upload a poster and perform with body nodes, camera movement or a
-              device motion sensor.
-            </p>
-            <h2>Movement → result</h2>
-            <p>
-              Signals below 8% are filtered out. The strongest active region
-              drives all poster pieces. Small gestures move pieces. Medium
-              gestures bend and squash them. Body motion at 65% or more enables
-              breakage on collision. A hard gesture does not split a piece until
-              it hits something. Already created fragments continue moving.
-            </p>
-            <p>
-              Input percentages express normalized node speed, not physical
-              distance. Face and fingertip movements use local proportions. Keep
-              the camera fixed for body nodes.
-            </p>
-            <h2>What do the paths measure?</h2>
-            <p>
-              Trails follow the centers of poster pieces, not your body or the
-              laptop. X/Y is the current position; dX/dY is the offset from the
-              original position; L is cumulative center travel; R is rotation; W
-              is bend amplitude. Distances use analyzed poster pixels with the
-              original poster’s top-left as (0,0). Panel coordinates show the
-              area-weighted center of all pieces.
-            </p>
-            <p>
-              Node colors identify body regions; trail colors identify poster
-              pieces. Each piece receives a random saturated RGB trail color,
-              preserved during movement and in exports. A × marks a split. New
-              fragments receive their own colors.
-            </p>
-            <h2>Controls & privacy</h2>
-            <p>
-              Pause freezes poster physics and sound while camera nodes remain
-              live. Drag or touch-drag the panel; arrow keys on its grip move it
-              too. Turn paths off for a clean image export. JSON always includes
-              the full map.
-            </p>
-            <p>
-              Files and camera frames stay on your device. No recording, uploads
-              or microphone. Tracking quality depends on lighting, visible
-              landmarks and browser performance.
-            </p>
+            <ol>
+              <li>There is a distance between what a map refers to and how it is represented.</li>
+              <li>A map reveals spatial relationships.</li>
+            </ol>
+            <p>I see these two qualities of maps reflected in posters. A poster is a medium that speaks of an event or an occasion, yet it cannot stand for the event or occasion itself. A poster is also the outcome of spatial relationships: it is made through careful consideration of the distances, sizes, angles, and colors of its graphic elements. In this sense, the poster is an emblematic medium of design, one that usually reaches completion through this process.</p>
+            <p>Lately, I have been thinking a great deal about “standards.”</p>
+            <p>While learning design within the setting of a “school,”<br />while making books and posters for public audiences,<br />while experiencing the designer’s role as a technician expected to conceal the self,<br />and while noticing that I no longer try anything beyond what a client asks for.</p>
+            <p>Then, recently, two things happened. One day, after attending a wedding, I met my closest colleague while still dressed formally from head to toe—a conventionally put-together version of myself. He looked at me and said, unexpectedly, “Don’t become a K-designer.” Looking back, I think I appeared to him as a “specimen,” equipped with all the things adults are supposed to have in place, and he was warning me that I might drift further and further down that path. I wondered whether his words might also describe the tendencies—or the early signs of them—in my everyday life and in the design I have been doing.</p>
+            <p>The other event was attending a very loud live music performance. As someone who does not like noise, I found the experience far removed from my everyday life. More than that, it gave me a synesthetic sense of what it means to use the human “body” to “express dramatically.” It sparked my interest in actively visualizing the body by using it in new ways.</p>
+            <p>These two turning points led me to make a website where I could shake up and mix these standards—or the things I am still wondering whether to call standards.</p>
           </div>
         </div>
       )}

@@ -103,7 +103,7 @@ describe('body, face and hand node measurements', () => {
     expect(gentle.strength).toBeGreaterThan(0);
     expect(strong.strength).toBeGreaterThan(gentle.strength * 2);
     expect(strong.body?.dominant).toBe('Arms');
-    expect(strong.body?.effect).toBe('BREAK ON IMPACT');
+    expect(strong.body?.effect).toBe('BREAK');
   });
   it('separates palm translation from finger articulation and local face expression', () => {
     const frame = person(),
@@ -137,7 +137,7 @@ describe('body, face and hand node measurements', () => {
       'MOVE',
       'BEND',
       'BEND',
-      'BREAK ON IMPACT',
+      'BREAK',
     ]);
   });
 });

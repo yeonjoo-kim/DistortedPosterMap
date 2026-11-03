@@ -39,7 +39,7 @@ export interface BodyObservation {
   nodes: BodyNode[];
   parts: PartReading[];
   dominant: Part | null;
-  effect: 'REST' | 'MOVE' | 'BEND' | 'BREAK ON IMPACT';
+  effect: 'REST' | 'MOVE' | 'BEND' | 'BREAK';
 }
 const visible = (p?: Joint): p is Joint =>
   !!p &&
@@ -230,7 +230,7 @@ export function motionEffect(strength: number): BodyObservation['effect'] {
       ? 'MOVE'
       : strength < 0.65
         ? 'BEND'
-        : 'BREAK ON IMPACT';
+        : 'BREAK';
 }
 /** Normalized landmark velocity. No motion is inferred without detected nodes. */
 export function bodyMotion(

@@ -6,6 +6,7 @@ export interface PosterElement {
   label: string;
   kind: ElementKind;
   sprite: HTMLCanvasElement;
+  pixelArea?: number;
   x: number;
   y: number;
   width: number;
