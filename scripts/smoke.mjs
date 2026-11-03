@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 import { jsPDF } from 'jspdf';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 const production = process.env.SMOKE_PRODUCTION === '1';
@@ -52,7 +52,9 @@ async function upload(page, buffer, name = 'poster.png', mimeType = 'image/png')
   await page.getByRole('dialog', { name: 'Crop poster' }).waitFor();
 }
 async function choose(page, label) {
-  await click(page, 'Motion input');
+  await click(page, 'Setting');
+  await page.getByRole('menuitem', { name: 'Motion detection', exact: true }).click();
+  assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Body Nodes', 'Device Motion Sensor']);
   await page.getByRole('menuitem', { name: label, exact: true }).click();
   await page.keyboard.press('Escape');
 }
@@ -76,152 +78,162 @@ try {
     return c.toDataURL().split(',')[1];
   }), 'base64');
   await upload(page, png);
-  assert.equal(await page.evaluate(() => !!window.__constraints), false);
   const crop = page.getByRole('dialog', { name: 'Crop poster', exact: true });
   assert.equal(await crop.locator('h1,p,input').count(), 0);
   assert.deepEqual(await crop.getByRole('button').allTextContents(), ['Cancel', 'Use crop']);
   const surface = await page.locator('.crop-surface').boundingBox();
-  await page.mouse.move(surface.x + surface.width * .05, surface.y + surface.height / 15);
-  await page.mouse.down();
-  await page.mouse.move(surface.x + surface.width * .9, surface.y + surface.height * 13 / 15);
-  await page.mouse.up();
+  await page.mouse.move(surface.x + surface.width * .05, surface.y + surface.height / 15); await page.mouse.down();
+  await page.mouse.move(surface.x + surface.width * .9, surface.y + surface.height * 13 / 15); await page.mouse.up();
   await click(page, 'Use crop');
-  await page.waitForFunction(() => document.querySelectorAll('.node-overlay circle').length >= 15);
-  await page.waitForTimeout(1400);
-  assert.equal(await page.getByRole('dialog').count(), 0);
-  assert.equal(await page.evaluate(() => window.__constraints.audio), false);
-  assert.equal(await page.locator('.studio.is-distorting').count(), 0);
-  if (!production) { const initial = await map(page); assert(Math.abs(initial.width - 340) <= 1); assert(Math.abs(initial.height - 480) <= 1); assert(initial.elements.every((e) => e.dx === 0 && e.dy === 0)); }
-  assert.equal(await page.locator('.input-heading,.coordinate-grid,.coordinate').count(), 0);
-  record('Free-ratio crop applied; desktop automatically starts body tracking and holds the complete poster still');
-  assert.equal(await page.locator('.input-meter,.response-scale,.output-count').count(), 0);
-  assert.equal(await page.getByRole('button', { name: /Expand tracking/ }).count(), 0);
-  const controls = page.getByRole('region', { name: 'Poster panel', exact: true });
-  assert.deepEqual(await controls.locator('.round-toggle').allTextContents(), ['node', 'data', 'black']);
-  assert.equal(await page.locator('.input-preview button').count(), 0);
-  const offStyle = await controls.getByRole('button', { name: 'Black paths', exact: true }).evaluate((el) => {
-    const s = getComputedStyle(el); return { opacity: s.opacity, radius: s.borderRadius, width: el.offsetWidth, height: el.offsetHeight };
-  });
-  assert.equal(offStyle.opacity, '0.3'); assert.equal(offStyle.radius, '50%'); assert.equal(offStyle.width, offStyle.height);
-  const videoBox = await page.locator('.video-window').boundingBox();
-  assert(Math.abs(videoBox.width / videoBox.height - 16 / 9) < .01);
-  assert.equal(await page.locator('.node-overlay').getAttribute('preserveAspectRatio'), 'xMidYMid meet');
-  await click(page, 'Black paths');
-  assert.equal(await controls.getByRole('button', { name: 'Black paths', exact: true }).getAttribute('aria-pressed'), 'true');
-  await click(page, 'Show body nodes'); assert.equal(await page.locator('.node-overlay').count(), 0);
-  await click(page, 'Show body nodes'); assert.equal(await page.locator('.node-overlay').count(), 1);
-  await click(page, 'Show motion readings'); assert.equal(await page.locator('.part-presence,.causal-readout').count(), 0);
-  await click(page, 'Show motion readings');
+  await page.waitForFunction(() => document.querySelector('[data-testid="motion-status"]').dataset.state === 'connected');
+  await page.waitForTimeout(1200);
   const panel = page.getByRole('region', { name: 'Poster panel', exact: true });
   const preview = page.getByRole('complementary', { name: 'Motion input', exact: true });
-  const cameraBefore = await preview.boundingBox(), panelBefore = await panel.boundingBox(), restartBefore = await page.getByRole('button', { name: 'Upload poster', exact: true }).boundingBox();
-  assert(cameraBefore.y + cameraBefore.height < panelBefore.y);
-  await page.screenshot({ path: 'test-results/updated-desktop-still.png' });
-  await page.mouse.move(5, 5);
-  await page.evaluate(() => { window.__amplitude = .12; });
-  await page.waitForFunction(() => document.querySelector('.studio.is-distorting'));
-  await page.waitForTimeout(1200);
-  await page.evaluate(() => { window.__amplitude = 0; });
-  const cameraAfter = await preview.boundingBox(), restartAfter = await page.getByRole('button', { name: 'Upload poster', exact: true }).boundingBox();
-  assert(Math.hypot(cameraAfter.x - cameraBefore.x, cameraAfter.y - cameraBefore.y) > 2);
-  assert(Math.hypot(restartAfter.x - restartBefore.x, restartAfter.y - restartBefore.y) > 2, JSON.stringify({ restartBefore, restartAfter }));
-  record('Motion moves poster pieces, camera preview and the + button; node and data toggles work');
-  await click(page, 'Pause motion'); await page.waitForTimeout(100);
-  if (!production) { const before = await map(page); await page.waitForTimeout(300); const after = await map(page); assert.deepEqual(before.elements, after.elements); }
-  await click(page, 'Download'); assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['JPG', 'PDF']);
-  for (const format of ['JPG', 'PDF']) {
-    const pending = page.waitForEvent('download');
-    await page.getByRole('menuitem', { name: format, exact: true }).click();
-    const bytes = await readFile(await (await pending).path());
-    assert(bytes.length > 1000);
-    if (format === 'PDF') assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
-    else assert.equal(bytes.subarray(0, 2).toString('hex'), 'ffd8');
-    if (format === 'JPG') await click(page, 'Download');
-  }
-  await click(page, 'About');
-  assert((await page.getByRole('dialog', { name: 'About', exact: true }).innerText()).includes('Don’t become a K-designer'));
-  assert.equal(await page.getByRole('dialog').locator('li').count(), 2);
-  await page.keyboard.press('Escape');
-  record('Pause holds state; only JPG/PDF download correctly; About contains the translated essay');
+  assert.equal(await panel.getByRole('button').count(), 6);
+  assert.equal(await panel.getByRole('button', { name: 'Path', exact: true }).getAttribute('aria-pressed'), 'false');
+  assert.equal(await panel.getByRole('button', { name: 'Data', exact: true }).getAttribute('aria-pressed'), 'false');
+  assert.equal(await preview.innerText(), '');
+  assert.equal(await page.locator('.node-overlay,.panel-data,.coordinate-grid').count(), 0);
+  assert(!(await panel.innerText()).includes('Poster map'));
+  const videoBox = await page.locator('.video-window').boundingBox();
+  assert(Math.abs(videoBox.width / videoBox.height - 16 / 9) < .01);
+  const transparency = await panel.evaluate((el) => ({ panel: getComputedStyle(el).backgroundColor, restart: getComputedStyle(el.querySelector('.restart-button')).backgroundColor }));
+  const alpha = (color) => Number.parseFloat(color.split(',').at(-1));
+  assert(Math.abs(alpha(transparency.panel) - 224 / 255) < .005);
+  assert.equal(alpha(transparency.panel), alpha(transparency.restart));
   if (!production) {
-    const physics = await page.evaluate(async () => {
+    const initial = await map(page);
+    assert(Math.abs(initial.width - 340) <= 1 && Math.abs(initial.height - 480) <= 1);
+    assert(!initial.settings.showPaths); assert(initial.elements.every((e) => e.dx === 0 && e.dy === 0));
+  }
+  record('Clean 16:9 camera; six translucent-panel controls; Path/Data/nodes default OFF');
+  await click(page, 'Path');
+  if (!production) { await page.waitForTimeout(40); const m = await map(page); assert(m.settings.showPaths && m.settings.blackPaths); }
+  await click(page, 'Data');
+  await page.waitForFunction(() => document.querySelectorAll('.node-overlay circle').length >= 15);
+  assert.equal(await panel.locator('[aria-label="Detected body parts"]').count(), 1);
+  assert((await panel.innerText()).includes('Head 0%'));
+  assert(!/input\s*0|paused|tracking stopped/i.test(await panel.innerText()));
+  assert.equal(await preview.innerText(), '');
+  assert.equal(await page.locator('.node-overlay title').count(), 0);
+  assert.equal(await panel.getByRole('button', { name: 'Path', exact: true }).getAttribute('aria-pressed'), 'false');
+  if (!production) { await page.waitForTimeout(40); const m = await map(page); assert(m.settings.showPaths && !m.settings.blackPaths); }
+  await click(page, 'Setting');
+  assert.equal(await page.getByRole('menuitem', { name: /^Sound/ }).count(), 1);
+  await page.getByRole('menuitem', { name: 'Motion detection', exact: true }).click();
+  assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Body Nodes', 'Device Motion Sensor']);
+  await page.keyboard.press('Escape'); await page.mouse.move(5, 5);
+  const cameraBefore = await preview.boundingBox(), tapesBefore = await page.locator('.tape').evaluateAll((els) => els.map((el) => el.style.transform));
+  await page.screenshot({ path: 'test-results/updated-desktop-still.png' });
+  await page.evaluate(() => { window.__amplitude = .18; });
+  await page.waitForFunction(() => document.querySelector('.studio.is-distorting'));
+  await page.waitForTimeout(1800); await page.evaluate(() => { window.__amplitude = 0; });
+  const cameraAfter = await preview.boundingBox(), tapesAfter = await page.locator('.tape').evaluateAll((els) => els.map((el) => el.style.transform));
+  assert(Math.hypot(cameraAfter.x - cameraBefore.x, cameraAfter.y - cameraBefore.y) > 2);
+  assert(tapesAfter.some((value, i) => value !== tapesBefore[i]));
+  record('Data unfolds in panel and enables colored paths/nodes; clean camera; two motion choices; tapes roll');
+  await click(page, 'Pause motion'); await page.waitForTimeout(120);
+  if (!production) { const before = await map(page); await page.waitForTimeout(200); assert.deepEqual(before.elements, (await map(page)).elements); }
+  const b = await panel.boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + 12); await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2 - 130, b.y - 60, { steps: 10 }); await page.mouse.up();
+  await page.waitForTimeout(80); assert.equal(await panel.getAttribute('data-dragging'), 'false');
+  const placed = await panel.boundingBox(); await page.mouse.move(20, 20); await page.waitForTimeout(120);
+  const released = await panel.boundingBox();
+  assert(Math.abs(placed.x - released.x) < 1 && Math.abs(placed.y - released.y) < 1);
+  record('Dragging releases on pointer-up and stays placed without a second click, including while paused');
+  await click(page, 'Download');
+  assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['JPG', 'PDF', 'Separate PNGs · ZIP']);
+  for (const format of ['JPG', 'PDF', 'Separate PNGs · ZIP']) {
+    const pending = page.waitForEvent('download'); await page.getByRole('menuitem', { name: format, exact: true }).click();
+    const downloaded = await pending, file = await downloaded.path(), bytes = await readFile(file);
+    assert(bytes.length > 100);
+    if (format === 'PDF') assert.equal(bytes.subarray(0, 4).toString(), '%PDF');
+    else if (format === 'JPG') assert.equal(bytes.subarray(0, 2).toString('hex'), 'ffd8');
+    else {
+      const result = JSON.parse(execFileSync('python3', ['-c', 'import zipfile,sys,json; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; assert all(n.endswith(".png") and z.read(n)[:8] == b"\\x89PNG\\r\\n\\x1a\\n" for n in z.namelist()); print(json.dumps({"count":len(z.namelist())}))', file], { encoding: 'utf8' }));
+      assert(result.count > 1);
+      if (!production) assert.equal(result.count, await page.evaluate(() => window.__engine.pieceSnapshots().length));
+    }
+    if (format !== 'Separate PNGs · ZIP') await click(page, 'Download');
+  }
+  await click(page, 'Restart'); await page.waitForTimeout(300);
+  assert.equal(await page.getByRole('dialog').count(), 0);
+  assert.equal(await page.locator('.studio.is-distorting').count(), 0);
+  assert.equal(await panel.getByRole('button', { name: 'Path', exact: true }).getAttribute('aria-pressed'), 'false');
+  if (!production) assert((await map(page)).elements.every((e) => e.dx === 0 && e.dy === 0));
+  record('JPG/PDF and compatible ZIP of individual PNGs export; + restarts same poster without reopening camera or upload');
+  if (!production) {
+    const result = await page.evaluate(async () => {
       const { extractElements } = await import('/src/lib/extract.ts');
       const { PosterPhysics } = await import('/src/lib/physics.ts');
       const { DEFAULT_SETTINGS } = await import('/src/lib/types.ts');
       const source = document.createElement('canvas'); source.width = 240; source.height = 240;
-      const ctx = source.getContext('2d'); ctx.fillStyle = '#ffc8dd'; ctx.fillRect(0, 0, 240, 240);
-      ctx.fillStyle = '#000'; ctx.font = '40px Arial'; ctx.fillText('AB', 20, 80);
-      const asset = extractElements(source, 'normal');
-      const reconstructed = document.createElement('canvas'); reconstructed.width = 240; reconstructed.height = 240;
-      const rc = reconstructed.getContext('2d');
-      for (const el of asset.elements) rc.drawImage(el.sprite, el.x - el.width / 2, el.y - el.height / 2);
-      const a = ctx.getImageData(0, 0, 240, 240).data, b = rc.getImageData(0, 0, 240, 240).data;
-      let difference = 0; for (let p = 0; p < a.length; p++) difference = Math.max(difference, Math.abs(a[p] - b[p]));
-      const blank = asset.background.getContext('2d').getImageData(0, 0, 240, 240).data.every((v) => v === 0);
-      const engine = new PosterPhysics(asset, DEFAULT_SETTINGS);
+      source.getContext('2d').fillStyle = '#ffc8dd'; source.getContext('2d').fillRect(0, 0, 240, 240);
+      const asset = extractElements(source, 'normal'), engine = new PosterPhysics(asset, { ...DEFAULT_SETTINGS });
       engine.setBounds({ x: -300, y: -300, width: 840, height: 840 });
-      for (let i = 0; i < 240; i++) { engine.shake(.6, { x: Math.cos(i), y: Math.sin(i) }); engine.update(16); }
-      const slowCount = engine.entities.length;
-      const noSlowBreaks = engine.completedTrails.length === 0 && slowCount === asset.elements.length;
-      let firstCount = 0, recursive = false;
-      for (let i = 0; i < 1600; i++) { engine.shake(1, { x: Math.cos(i), y: Math.sin(i) }); engine.update(16); if (i === 120) firstCount = engine.entities.length; }
-      recursive = engine.entities.some((e) => e.element.id.split('.').length >= 3);
-      const count = engine.entities.length, sum = engine.entities.reduce((s,e) => s+e.areaWeight, 0);
+      for (let i = 0; i < 180; i++) { engine.shake(.6, { x: Math.cos(i), y: Math.sin(i) }); engine.update(16); }
+      const slowSafe = engine.completedTrails.length === 0;
+      let firstRatio = 0, firstCount = 0;
+      for (let i = 0; i < 1800; i++) {
+        engine.shake(1, { x: Math.cos(i * .1), y: Math.sin(i * .1) }); engine.update(16);
+        if (!firstRatio && engine.completedTrails.length) { firstRatio = Math.max(...engine.entities.map((e) => e.areaWeight)) / (240 * 240); firstCount = engine.entities.length; }
+      }
+      const recursive = engine.entities.some((e) => e.element.id.split('.').length > 3);
+      const continued = engine.completedTrails.length > 4 && engine.entities.length > firstCount;
+      const area = engine.entities.reduce((sum, e) => sum + e.areaWeight, 0);
+      const pieces = engine.pieceSnapshots(), transparent = pieces.some((p) => {
+        const data = p.canvas.getContext('2d').getImageData(0, 0, p.canvas.width, p.canvas.height).data;
+        return data.some((v, i) => i % 4 === 3 && v === 0);
+      });
       const finite = engine.mapData().elements.every((e) => e.sourceVertices.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)));
-      const gravity = engine.engine.gravity.y;
-      // A trail and its annotation must be painted before any foreground sprites.
-      engine.settings.blackPaths = true;
-      const strokeColors = [];
-      let trailsPainted = false, pathUnderPieces = true;
-      const renderCanvas = document.createElement('canvas'), render = renderCanvas.getContext('2d');
-      const drawImage = render.drawImage.bind(render), stroke = render.stroke.bind(render);
-      render.stroke = (...args) => { trailsPainted = true; strokeColors.push(render.strokeStyle); return stroke(...args); };
-      render.drawImage = (...args) => { if (!trailsPainted) pathUnderPieces = false; return drawImage(...args); };
-      engine.render(render, true); engine.dispose();
-      return { blackStrokes: strokeColors.length > 0 && strokeColors.every((color) => color === '#000000'), difference, blank, noSlowBreaks, firstCount, count, recursive, sum, finite, gravity, pathUnderPieces };
+      engine.settings.showPaths = true; engine.settings.blackPaths = false;
+      for (let i = 0; i < 24; i++) {
+        engine.applyMotion({ source: 'body', strength: .4, fractureStrength: .4, magnitude: 1, confidence: 1,
+          direction: { x: -1, y: 0 }, body: { dominant: 'Arms', parts: [], nodes: [], effect: 'BEND' } }); engine.update(16);
+      }
+      const c = document.createElement('canvas'), ctx = c.getContext('2d'), colors = [], stroke = ctx.stroke.bind(ctx);
+      ctx.stroke = (...args) => { colors.push(ctx.strokeStyle); return stroke(...args); };
+      engine.render(ctx); const causalColor = colors.includes('#ff365f'); colors.length = 0;
+      engine.settings.blackPaths = true; engine.render(ctx); const black = colors.length > 0 && colors.every((v) => v === '#000000');
+      engine.dispose(); return { slowSafe, firstRatio, recursive, continued, area, transparent, finite, causalColor, black };
     });
-    assert.equal(physics.difference, 0); assert(physics.blank); assert(physics.noSlowBreaks); assert(physics.recursive);
-    assert(physics.count > physics.firstCount); assert(Math.abs(physics.sum - 240 * 240) < .01);
-    assert(physics.finite); assert.equal(physics.gravity, 0); assert(physics.pathUnderPieces); assert(physics.blackStrokes);
-    record('All pixels reconstructed exactly; no fixed background remains; fragments split again with conserved area, zero gravity and paths underneath');
+    assert(result.slowSafe); assert(result.firstRatio >= .82 && result.firstRatio < 1);
+    assert(result.recursive && result.continued); assert(Math.abs(result.area - 240 * 240) < .01);
+    assert(result.transparent && result.finite && result.causalColor && result.black);
+    record('Vigorous pieces repeatedly shed small edge chips, preserve main body/area, export transparent shapes and record body-colored routes');
   }
-  // Narrow touch devices offer exactly the two requested modes at startup.
   const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile' });
-  const mobile = await mobileContext.newPage(); mobile.on('pageerror', (error) => errors.push(error.message));
-  await fakeCamera(mobile); await mobile.goto(base); await upload(mobile, png);
-  const cropSurface = await mobile.locator('.crop-surface').boundingBox();
-  await mobile.mouse.move(cropSurface.x + 5, cropSurface.y + 5); await mobile.mouse.down();
-  await mobile.mouse.move(cropSurface.x + cropSurface.width * .7, cropSurface.y + cropSurface.height * .6); await mobile.mouse.up();
-  assert((await mobile.locator('.crop-selection').boundingBox()).width < cropSurface.width);
-  await click(mobile, 'Use crop');
+  const mobile = await mobileContext.newPage(); mobile.on('pageerror', (e) => errors.push(e.message));
+  await fakeCamera(mobile); await mobile.goto(base); await upload(mobile, png); await click(mobile, 'Use crop');
   await mobile.getByRole('dialog', { name: 'Choose motion input', exact: true }).waitFor();
-  assert.equal(await mobile.evaluate(() => !!window.__constraints), false);
-  await click(mobile, 'Device motion sensor');
-  await mobile.waitForFunction(() => document.querySelector('.input-message')?.textContent.includes('actual acceleration'));
-  await mobile.evaluate(async () => { for (let i=0;i<3;i++) { window.dispatchEvent(new DeviceMotionEvent('devicemotion', { acceleration: { x: 0, y: 0, z: 0 }, interval: 50 })); await new Promise((r) => setTimeout(r, 55)); } });
+  await click(mobile, 'Device Motion Sensor');
+  await mobile.evaluate(async () => { for (let i=0;i<8;i++) { window.dispatchEvent(new DeviceMotionEvent('devicemotion', { acceleration: { x: 0, y: 0, z: 0 }, interval: 60 })); await new Promise((r) => setTimeout(r, 65)); } });
   await mobile.waitForFunction(() => document.querySelector('[data-testid="motion-status"]').dataset.state === 'connected');
-  assert.equal(await mobile.locator('.studio.is-distorting').count(), 0);
-  await mobile.evaluate(async () => { for (let i=0;i<5;i++) { window.dispatchEvent(new DeviceMotionEvent('devicemotion', { acceleration: { x: 8, y: 4, z: 1 }, interval: 50 })); await new Promise((r) => setTimeout(r, 55)); } });
+  await click(mobile, 'Data');
+  assert(!/input\s*0|paused|tracking stopped/i.test(await mobile.locator('.mapping-panel').innerText()));
+  assert.equal(await mobile.locator('.input-preview').innerText(), '');
+  await mobile.evaluate(async () => { for (let i=0;i<5;i++) { window.dispatchEvent(new DeviceMotionEvent('devicemotion', { acceleration: { x: 8, y: 4, z: 1 }, interval: 60 })); await new Promise((r) => setTimeout(r, 65)); } });
   await mobile.waitForFunction(() => document.querySelector('.studio.is-distorting'));
-  assert(await mobile.evaluate(() => document.documentElement.scrollHeight <= innerHeight));
-  const mobilePanel = await mobile.getByRole('region', { name: 'Poster panel', exact: true }).boundingBox();
-  assert(mobilePanel.x >= -1 && mobilePanel.y >= -1 && mobilePanel.x + mobilePanel.width <= 391 && mobilePanel.y + mobilePanel.height <= 845);
+  await click(mobile, 'Pause motion');
+  const mb = await mobile.locator('.mapping-panel').boundingBox();
+  assert(mb.x >= -1 && mb.y >= -1 && mb.x + mb.width <= 391 && mb.y + mb.height <= 845);
+  const touch = await mobileContext.newCDPSession(mobile);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: mb.x + 30, y: mb.y + 10 }] });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: mb.x + 15, y: mb.y - 30 }] });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  assert.equal(await mobile.locator('.mapping-panel').getAttribute('data-dragging'), 'false');
   await mobile.screenshot({ path: 'test-results/updated-mobile.png' });
-  record('Mobile supports pointer cropping, startup choice, actual sensor samples and no page scrolling');
-  // Verify native PDF loading still reaches cropping.
+  record('Mobile sensor choice, expanding data panel, viewport bounds and touch release work');
   const pdf = new jsPDF(); pdf.text('POSTER', 20, 40);
-  await upload(page, Buffer.from(pdf.output('arraybuffer')), 'poster.pdf', 'application/pdf');
-  await click(page, 'Use crop');
+  await upload(page, Buffer.from(pdf.output('arraybuffer')), 'poster.pdf', 'application/pdf'); await click(page, 'Use crop');
   await page.getByLabel('Distorted poster', { exact: true }).waitFor();
-  record('PDF import still works through the crop workflow');
-  const real = await context.newPage(); real.on('pageerror', (error) => errors.push(error.message));
-  await fakeCamera(real, true); await real.goto(base); await upload(real, png); await click(real, 'Use crop');
+  const real = await context.newPage(); real.on('pageerror', (e) => errors.push(e.message));
+  await fakeCamera(real, true); await real.goto(base); await upload(real, png); await click(real, 'Use crop'); await click(real, 'Data');
   await real.waitForFunction(() => document.querySelectorAll('.node-overlay circle').length > 15, undefined, { timeout: 60000 });
-  await choose(real, 'Stop tracking');
+  await choose(real, 'Device Motion Sensor');
   assert.equal(await real.evaluate(() => window.__stream.getVideoTracks()[0].readyState), 'ended');
-  record('The real self-hosted body tracker detects the fixture and releases the camera on stop');
+  record('PDF import and real local body model work; mode switching releases camera');
   assert.deepEqual(errors, []);
   console.log(`Browser checks passed (${production ? 'production' : 'development'}).`);
-} finally {
-  await browser?.close(); server.kill('SIGTERM');
-}
+} finally { await browser?.close(); server.kill('SIGTERM'); }

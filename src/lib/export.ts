@@ -60,3 +60,17 @@ export function exportMap(engine: PosterPhysics, name: string) {
     `${name.replace(/\.[^.]+$/, '')}-coordinates.json`,
   );
 }
+
+/** One transparent, tightly cropped PNG for each current poster piece. */
+export async function exportPieces(engine: PosterPhysics, name: string) {
+  const { zipFiles } = await import('./zip');
+  const pieces = engine.pieceSnapshots();
+  const files = [];
+  for (const piece of pieces) {
+    const blob = await new Promise<Blob | null>((resolve) => piece.canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Unable to export a piece.');
+    files.push({ name: `piece-${String(files.length + 1).padStart(4, '0')}-${piece.id.slice(-100)}.png`, data: new Uint8Array(await blob.arrayBuffer()) });
+  }
+  const base = name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9가-힣_-]/g, '-').slice(0, 70) || 'poster';
+  download(zipFiles(files), `${base}-pieces.zip`);
+}

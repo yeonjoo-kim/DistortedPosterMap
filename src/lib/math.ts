@@ -31,3 +31,26 @@ export function zigzagOffset(y: number, height: number, amplitude: number) {
   const t = (y / Math.max(1, height)) * 4;
   return (Math.abs((((t % 2) + 2) % 2) - 1) * 2 - 1) * amplitude;
 }
+
+/** Clip a convex polygon on either side of a line; shared edges stay identical. */
+export function clipPolygon(points: { x: number; y: number }[], normal: { x: number; y: number }, offset: number, keepLess = true) {
+  const output: { x: number; y: number }[] = [];
+  const signed = (p: { x: number; y: number }) => (p.x * normal.x + p.y * normal.y - offset) * (keepLess ? 1 : -1);
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length], da = signed(a), db = signed(b);
+    if (da <= 0) output.push({ ...a });
+    if ((da < 0 && db > 0) || (da > 0 && db < 0)) {
+      const t = da / (da - db);
+      output.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+    }
+  }
+  return output;
+}
+export function polygonCenter(points: { x: number; y: number }[]) {
+  let area = 0, x = 0, y = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length], cross = a.x * b.y - b.x * a.y;
+    area += cross; x += (a.x + b.x) * cross; y += (a.y + b.y) * cross;
+  }
+  return { x: x / (3 * area), y: y / (3 * area) };
+}

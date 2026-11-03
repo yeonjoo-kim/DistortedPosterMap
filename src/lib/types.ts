@@ -1,6 +1,6 @@
 export type Detail = 'coarse' | 'normal' | 'fine';
 export type ElementKind = 'text' | 'shape' | 'region' | 'fragment';
-export type Point = { x: number; y: number };
+export type Point = { x: number; y: number; color?: string };
 export interface PosterElement {
   id: string;
   label: string;
@@ -60,9 +60,9 @@ export interface Telemetry {
   deformation: number;
 }
 export const DEFAULT_SETTINGS: Settings = {
-  showPaths: true,
+  showPaths: false,
   blackPaths: false,
-  showLabels: true,
+  showLabels: false,
   paused: false,
   original: false,
 };

@@ -135,7 +135,7 @@ describe('body, face and hand node measurements', () => {
       next = person();
     next.pose[15].x += 0.4;
     expect(bodyMotion(frame, next, 2).strength).toBe(0);
-    expect([0.07, 0.08, 0.34, 0.35, 0.92, 0.93].map(motionEffect)).toEqual([
+    expect([0.07, 0.08, 0.34, 0.35, 0.8, 0.81].map(motionEffect)).toEqual([
       'REST',
       'MOVE',
       'MOVE',

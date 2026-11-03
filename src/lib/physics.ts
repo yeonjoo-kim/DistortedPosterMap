@@ -1,8 +1,11 @@
 import Matter from 'matter-js';
+import { PART_COLORS } from './body';
 import { randomTrailColor } from './trailColor';
 import { canvas } from './demo';
 import {
   clamp,
+  clipPolygon,
+  polygonCenter,
   shakeImpulse,
   clayOffset,
   materialResponse,
@@ -67,7 +70,7 @@ export class PosterPhysics {
   private draggingFixtures = new Set<string>();
   private fractureWindow = 0;
   private fractureCooldown = 0;
-  private fractureCharge = 0;
+
   completedTrails: {
     id: string;
     path: Point[];
@@ -160,13 +163,6 @@ export class PosterPhysics {
                 impact *
                 Math.min(18, entity.element.width * 0.12),
           );
-          if (
-            this.fractureWindow > 0 && this.fractureCharge >= 0.6 &&
-            entity.damage >= 0.7 && speed > 16 &&
-            entity.element.width > 20 &&
-            entity.element.height > 14
-          )
-            this.toBreak.add(entity);
         }
       }
     });
@@ -269,14 +265,12 @@ export class PosterPhysics {
   applyMotion(sample: MotionSample) {
     if (this.settings.paused || this.settings.original || sample.confidence <= 0) {
       this.fractureWindow = 0;
-      this.fractureCharge = 0;
       this.toBreak.clear();
       return;
     }
     if (sample.source !== this.lastInput?.source) {
       this.peak = 0;
       this.peakAge = 0;
-      this.fractureCharge = 0;
     }
     // Local facial/finger speed can saturate from tiny movements. Broad body
     // movement independently controls fracture; all nodes still drive movement.
@@ -290,7 +284,6 @@ export class PosterPhysics {
     const fast = shakeImpulse(fractureStrength) > FRACTURE_SPEED_THRESHOLD;
     this.fractureWindow = fast ? 0.22 : 0;
     if (!fast) {
-      this.fractureCharge = 0;
       this.toBreak.clear();
     }
     if (strength < 0.08) return;
@@ -312,7 +305,7 @@ export class PosterPhysics {
       Matter.Body.setAngularVelocity(
         body,
         clamp(
-          body.angularVelocity + direction.x * strength * 0.008,
+          body.angularVelocity + (id.startsWith('tape-') ? (Math.random() - 0.5) * strength * 0.1 : direction.x * strength * 0.008),
           -0.035,
           0.035,
         ),
@@ -320,11 +313,6 @@ export class PosterPhysics {
     }
     for (const entity of this.entities) {
       entity.strain += strength * 0.52;
-      if (fast && this.fractureCharge >= 0.6) {
-        const excess = (shakeImpulse(fractureStrength) - FRACTURE_SPEED_THRESHOLD) / (1 - FRACTURE_SPEED_THRESHOLD);
-        entity.damage = Math.min(1, entity.damage + excess * excess * 0.08);
-        if (entity.damage >= 0.7) this.toBreak.add(entity);
-      } else entity.damage = 0;
       Matter.Body.setStatic(entity.body, false);
       Matter.Sleeping.set(entity.body, false);
       entity.body.restitution = profile.restitution;
@@ -368,7 +356,6 @@ export class PosterPhysics {
   update(delta: number) {
     if (this.settings.paused || this.settings.original) {
       this.fractureWindow = 0;
-      this.fractureCharge = 0;
       this.toBreak.clear();
       return;
     }
@@ -379,7 +366,6 @@ export class PosterPhysics {
     this.peakAge += dt;
     this.fractureWindow = Math.max(0, this.fractureWindow - elapsed);
     this.fractureCooldown = Math.max(0, this.fractureCooldown - elapsed);
-    this.fractureCharge = this.fractureWindow > 0 ? this.fractureCharge + elapsed : 0;
     if (!this.active) return;
     this.engine.gravity.y = 0;
     // A weak circulating current keeps released pieces suspended without a downwards bias.
@@ -405,12 +391,19 @@ export class PosterPhysics {
       if (Number.isFinite(step)) entity.distance += step;
       entity.previousPosition = { ...position };
     }
+    for (const entity of this.entities) {
+      const vigor = Math.max(entity.body.speed / 18, Math.abs(entity.body.angularVelocity) / 0.14);
+      if (this.fractureWindow > 0 && vigor > 0.8 && !entity.body.isStatic) {
+        entity.damage = Math.min(1, entity.damage + Math.min(2, vigor - 0.8) * elapsed);
+        if (entity.damage >= 0.38) this.toBreak.add(entity);
+      } else entity.damage *= Math.exp(-elapsed * 1.4);
+    }
     this.frame++;
-    if (this.entities.length < 650 && this.fractureWindow > 0 && this.fractureCharge >= 0.6 && this.fractureCooldown === 0)
+    if (this.entities.length < 650 && this.fractureWindow > 0 && this.fractureCooldown === 0)
       for (const entity of [...this.toBreak].filter((entity) => this.canSplit(entity)).slice(0, 1)) {
         if (this.entities.length + 1 > 650) break;
         this.fracture(entity);
-        this.fractureCooldown = 2.5;
+        this.fractureCooldown = 1.25;
       }
     this.toBreak.clear();
     for (const entity of this.entities) {
@@ -475,7 +468,8 @@ export class PosterPhysics {
           entity.body.position.y - last.y,
         ) > 1.5
       ) {
-        entity.path.push({ ...entity.body.position });
+        const part = this.lastInput?.body?.dominant;
+        entity.path.push({ ...entity.body.position, color: part ? PART_COLORS[part] : this.lastInput?.source === 'body' ? entity.path.at(-1)?.color ?? entity.trailColor : entity.trailColor });
         // Thin old samples, preserving the start and the detailed recent trail.
         if (entity.path.length > 360)
           entity.path = [
@@ -487,9 +481,8 @@ export class PosterPhysics {
   }
 
   private canSplit(entity: Entity) {
-    return this.entities.includes(entity) && entity.element.width >= 16 &&
-      entity.element.height >= 12 && entity.areaWeight >= 90 &&
-      entity.element.id.split('.').length <= 5;
+    return this.entities.includes(entity) && entity.element.width >= 10 &&
+      entity.element.height >= 10 && entity.areaWeight >= 90;
   }
 
   private fracture(entity: Entity) {
@@ -522,9 +515,26 @@ export class PosterPhysics {
       { x: 0, y: texture.height },
     ];
     const fragments: Entity[] = [];
-    const triangles = Math.random() < 0.5
-      ? [[corners[0], corners[1], corners[2]], [corners[0], corners[2], corners[3]]]
-      : [[corners[0], corners[1], corners[3]], [corners[1], corners[2], corners[3]]];
+    // Find an occupied edge, including on irregular/previously chipped sprites.
+    // Prefer a small chip (~6% of visible pixels), keeping the main body intact.
+    const pixels = textureCtx.getImageData(0, 0, texture.width, texture.height).data;
+    let total = 0;
+    const step = Math.max(1, Math.floor(Math.max(texture.width, texture.height) / 140));
+    for (let y = 0; y < texture.height; y += step) for (let x = 0; x < texture.width; x += step)
+      total += pixels[(y * texture.width + x) * 4 + 3];
+    let best: { normal: Point; offset: number; score: number } | null = null;
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const cut of [0.28, 0.45, 0.65, 0.9, 1.2]) {
+      const normal = { x: sx / texture.width, y: sy / texture.height };
+      const offset = cut - (sx < 0 ? 1 : 0) - (sy < 0 ? 1 : 0);
+      let chip = 0;
+      for (let y = 0; y < texture.height; y += step) for (let x = 0; x < texture.width; x += step)
+        if (x * normal.x + y * normal.y <= offset) chip += pixels[(y * texture.width + x) * 4 + 3];
+      const ratio = chip / total;
+      if (ratio >= 0.015 && ratio <= 0.18 && (!best || Math.abs(ratio - 0.06) < best.score))
+        best = { normal, offset, score: Math.abs(ratio - 0.06) };
+    }
+    if (!best) { entity.damage = 0; return; }
+    const triangles = [clipPolygon(corners, best.normal, best.offset), clipPolygon(corners, best.normal, best.offset, false)];
     for (let i = 0; i < triangles.length; i++) {
       const points = triangles[i];
       const minX = Math.floor(Math.min(...points.map((p) => p.x))),
@@ -546,10 +556,7 @@ export class PosterPhysics {
       let visibleArea = 0;
       for (let p = 3; p < alpha.length; p += 4) visibleArea += alpha[p] / 255;
       if (visibleArea < 1) continue;
-      const centroid = {
-        x: points.reduce((s, p) => s + p.x, 0) / 3,
-        y: points.reduce((s, p) => s + p.y, 0) / 3,
-      };
+      const centroid = polygonCenter(points);
       const dx = centroid.x - parentAnchor.x,
         dy = centroid.y - parentAnchor.y;
       const world = {
@@ -676,6 +683,13 @@ export class PosterPhysics {
     else {
       ctx.drawImage(this.asset.background, 0, 0);
       for (const entity of this.entities) {
+        this.drawEntity(ctx, entity);
+      }
+    }
+
+  }
+
+  private drawEntity(ctx: CanvasRenderingContext2D, entity: Entity) {
         const { element: el, body, anchor, warp } = entity;
         ctx.save();
         ctx.translate(body.position.x, body.position.y);
@@ -695,9 +709,31 @@ export class PosterPhysics {
           }
         } else ctx.drawImage(el.sprite, -anchor.x, -anchor.y);
         ctx.restore();
-      }
-    }
+  }
 
+  pieceSnapshots() {
+    return this.entities.flatMap((entity) => {
+      const { element: el, anchor, body, warp } = entity;
+      const corners = [
+        { x: -anchor.x - warp, y: -anchor.y }, { x: el.width - anchor.x + warp, y: -anchor.y },
+        { x: el.width - anchor.x + warp, y: el.height - anchor.y }, { x: -anchor.x - warp, y: el.height - anchor.y },
+      ].map((p) => ({ x: p.x * entity.scaleX * Math.cos(body.angle) - p.y * entity.scaleY * Math.sin(body.angle),
+        y: p.x * entity.scaleX * Math.sin(body.angle) + p.y * entity.scaleY * Math.cos(body.angle) }));
+      const minX = Math.floor(Math.min(...corners.map((p) => p.x))) - 2, minY = Math.floor(Math.min(...corners.map((p) => p.y))) - 2;
+      const output = canvas(Math.ceil(Math.max(...corners.map((p) => p.x))) - minX + 2, Math.ceil(Math.max(...corners.map((p) => p.y))) - minY + 2);
+      const ctx = output.getContext('2d')!;
+      ctx.translate(-body.position.x - minX, -body.position.y - minY);
+      this.drawEntity(ctx, entity);
+      const image = ctx.getImageData(0, 0, output.width, output.height);
+      let x0 = output.width, y0 = output.height, x1 = -1, y1 = -1;
+      for (let y = 0; y < output.height; y++) for (let x = 0; x < output.width; x++) if (image.data[(y * output.width + x) * 4 + 3]) {
+        x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+      }
+      if (x1 < x0) return [];
+      const cropped = canvas(x1 - x0 + 1, y1 - y0 + 1);
+      cropped.getContext('2d')!.drawImage(output, x0, y0, cropped.width, cropped.height, 0, 0, cropped.width, cropped.height);
+      return [{ id: entity.element.id, canvas: cropped }];
+    });
   }
 
   private drawTracking(ctx: CanvasRenderingContext2D) {
@@ -711,16 +747,15 @@ export class PosterPhysics {
     ) => {
       if (!path.length) return;
       color = colorFor(color);
-      ctx.beginPath();
-      path.forEach((point, i) =>
-        i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y),
-      );
-      ctx.lineTo(end.x, end.y);
-      ctx.strokeStyle = color;
       ctx.globalAlpha = archived ? 0.45 : 0.95;
       ctx.lineWidth = (archived ? 0.8 : 1.1) * scale;
       ctx.setLineDash([]);
-      ctx.stroke();
+      let previous = path[0];
+      for (const point of [...path.slice(1), end]) {
+        ctx.beginPath(); ctx.moveTo(previous.x, previous.y); ctx.lineTo(point.x, point.y);
+        ctx.strokeStyle = colorFor(point.color ?? previous.color ?? color); ctx.stroke();
+        previous = point;
+      }
       if (archived) {
         ctx.beginPath();
         ctx.moveTo(end.x - 3 * scale, end.y - 3 * scale);
@@ -737,7 +772,7 @@ export class PosterPhysics {
       for (const entity of this.entities) {
         const { origin, body, path } = entity;
         // The dotted displacement is distinct from the actual travelled route.
-        ctx.strokeStyle = colorFor(entity.trailColor);
+        ctx.strokeStyle = colorFor(entity.path.at(-1)?.color ?? entity.trailColor);
         ctx.globalAlpha = 0.28;
         ctx.lineWidth = 0.65 * scale;
         ctx.setLineDash([3 * scale, 4 * scale]);
@@ -748,7 +783,7 @@ export class PosterPhysics {
         trace(path, body.position, entity.trailColor);
         ctx.globalAlpha = 1;
         ctx.fillStyle = '#fff9e9';
-        ctx.strokeStyle = colorFor(entity.trailColor);
+        ctx.strokeStyle = colorFor(entity.path.at(-1)?.color ?? entity.trailColor);
         ctx.lineWidth = scale;
         ctx.beginPath();
         ctx.arc(origin.x, origin.y, 2.5 * scale, 0, Math.PI * 2);
@@ -762,7 +797,7 @@ export class PosterPhysics {
         ctx.save();
         ctx.translate(body.position.x, body.position.y);
         ctx.rotate(angle);
-        ctx.fillStyle = colorFor(entity.trailColor);
+        ctx.fillStyle = colorFor(entity.path.at(-1)?.color ?? entity.trailColor);
         ctx.beginPath();
         ctx.moveTo(4 * scale, 0);
         ctx.lineTo(-3 * scale, -2.6 * scale);
@@ -772,7 +807,7 @@ export class PosterPhysics {
         ctx.restore();
         if (entity.warp > 0.2 || entity.compression > 0.02) {
           const points = this.deformationPoints(entity.element.id);
-          ctx.strokeStyle = colorFor(entity.trailColor);
+          ctx.strokeStyle = colorFor(entity.path.at(-1)?.color ?? entity.trailColor);
           ctx.lineWidth = 1.2 * scale;
           ctx.beginPath();
           points.forEach((point, i) =>
@@ -860,7 +895,7 @@ export class PosterPhysics {
       const box = boxes.sort((a, b) => overlap(a) - overlap(b))[0];
       if (used.length && overlap(box) > width * height * 0.05) continue;
       used.push(box);
-      ctx.strokeStyle = colorFor(entity.trailColor);
+      ctx.strokeStyle = colorFor(entity.path.at(-1)?.color ?? entity.trailColor);
       ctx.lineWidth = 0.7 * scale;
       ctx.setLineDash([]);
       ctx.beginPath();

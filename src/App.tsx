@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Camera,
+  Activity,
   Grip,
   Pause,
   Play,
@@ -11,9 +11,8 @@ import {
 } from 'lucide-react';
 import { CropDialog } from './CropDialog';
 import { extractElements, loadPoster } from './lib/extract';
-import { exportPoster } from './lib/export';
+import { exportPieces, exportPoster } from './lib/export';
 import { PosterPhysics } from './lib/physics';
-import { FRACTURE_SPEED_THRESHOLD } from './lib/motion';
 import { BODY_LINKS, PART_COLORS } from './lib/body';
 import { DEFAULT_SETTINGS } from './lib/types';
 import type { Point, PosterAsset, Settings, Telemetry } from './lib/types';
@@ -35,19 +34,18 @@ export default function App() {
     [saving, setSaving] = useState(false),
     [notice, setNotice] = useState('');
   const [about, setAbout] = useState(false),
-    [showNodes, setShowNodes] = useState(true),
-    [showReadings, setShowReadings] = useState(true),
+    [showReadings, setShowReadings] = useState(false),
     [chooseInput, setChooseInput] = useState(false),
     [isDragging, setIsDragging] = useState(false);
   const [settings, setSettings] = useState<Settings>({ ...DEFAULT_SETTINGS }),
     [telemetry, setTelemetry] = useState(empty);
-  const [recentBreak, setRecentBreak] = useState(false),
-    [menu, setMenu] = useState<'motion' | 'download' | null>(null);
+  const [resetVersion, setResetVersion] = useState(0),
+    [menu, setMenu] = useState<'setting' | 'motion' | 'download' | null>(null);
   const [menuPosition, setMenuPosition] = useState({ left: 12, top: 12 }),
     [dropActive, setDropActive] = useState(false),
     [videoRatio, setVideoRatio] = useState(16 / 9);
   const [pendingPoster, setPendingPoster] = useState<{ asset: PosterAsset; name: string } | null>(null);
-  const previewRef = useRef<HTMLElement>(null), uploadRef = useRef<HTMLButtonElement>(null);
+  const previewRef = useRef<HTMLElement>(null), tapeRefs = useRef<(HTMLImageElement | null)[]>([]);
   const fileRef = useRef<HTMLInputElement>(null),
     canvasRef = useRef<HTMLCanvasElement>(null),
     paperRef = useRef<HTMLDivElement>(null);
@@ -76,6 +74,33 @@ export default function App() {
   const { driveSound, impactSound } = input;
   const font = telemetry.active ? 'MetaAccanthisAlternate' : 'MetaAccanthis';
 
+  const fixtureNodes = () => [
+    { id: 'wordmark', node: wordmarkRef.current },
+    { id: 'about', node: aboutRef.current },
+    { id: 'adjust-box', node: panelRef.current },
+    { id: 'camera-preview', node: previewRef.current },
+    ...tapeRefs.current.map((node, i) => ({ id: `tape-${i}`, node })),
+  ];
+  function restart() {
+    setMenu(null);
+    panelPlaced.current = false;
+    hovered.current = false;
+    drag.current = null;
+    setIsDragging(false);
+    setTelemetry(empty);
+    setShowReadings(false);
+    setSettings({ ...DEFAULT_SETTINGS });
+    setResetVersion((version) => version + 1);
+  }
+  function togglePath() {
+    const active = settings.showPaths && settings.blackPaths;
+    setShowReadings(false);
+    setSettings((state) => ({ ...state, showPaths: !active, blackPaths: true, showLabels: false }));
+  }
+  function toggleData() {
+    setShowReadings(!showReadings);
+    setSettings((state) => ({ ...state, showPaths: !showReadings, blackPaths: false, showLabels: false }));
+  }
   function holdPanel() {
     const engine = engineRef.current;
     if (!engine) return;
@@ -121,14 +146,14 @@ export default function App() {
         height: innerHeight / scale,
       });
       engine.setFixtures(
-        [wordmarkRef.current, aboutRef.current, panelRef.current, previewRef.current, uploadRef.current].flatMap(
-          (node, i) => {
+        fixtureNodes().flatMap(
+          ({ id, node }) => {
             if (!node) return [];
             node.style.transform = '';
             const box = node.getBoundingClientRect();
             return [
               {
-                id: ['wordmark', 'about', 'adjust-box', 'camera-preview', 'restart'][i],
+                id,
                 x: (box.left + box.width / 2 - paper.left) / scale,
                 y: (box.top + box.height / 2 - paper.top) / scale,
                 width: box.width / scale,
@@ -163,9 +188,7 @@ export default function App() {
     if (panelRef.current) fixtureObserver.observe(panelRef.current);
     let frame = 0,
       last = performance.now(),
-      lastUi = 0,
-      lastFractures = 0,
-      lastBreak = -1000;
+      lastUi = 0;
     const render = (now: number) => {
       engine.settings = settingsRef.current;
       engine.update(now - last);
@@ -182,9 +205,9 @@ export default function App() {
         top * ratio,
       );
       engine.render(ctx);
-      [wordmarkRef.current, aboutRef.current, panelRef.current, previewRef.current, uploadRef.current].forEach(
-        (node, i) => {
-          const fixture = engine.fixtures[i];
+      fixtureNodes().forEach(
+        ({ id, node }) => {
+          const fixture = engine.fixtures.find((item) => item.id === id);
           if (node && fixture)
             node.style.transform = `translate(${(fixture.body.position.x - fixture.origin.x) * scale}px,${(fixture.body.position.y - fixture.origin.y) * scale}px) rotate(${fixture.body.angle}rad)`;
         },
@@ -192,9 +215,6 @@ export default function App() {
       driveSound(engine.energy);
       if (now - lastUi > 110) {
         const data = engine.telemetry();
-        if (data.fractures > lastFractures) lastBreak = now;
-        lastFractures = data.fractures;
-        setRecentBreak(now - lastBreak < 650);
         setTelemetry(data);
         lastUi = now;
       }
@@ -205,15 +225,15 @@ export default function App() {
       cancelAnimationFrame(frame);
       fixtureObserver.disconnect();
       window.removeEventListener('resize', layout);
-      [wordmarkRef.current, aboutRef.current, panelRef.current, previewRef.current, uploadRef.current].forEach(
-        (node) => {
+      fixtureNodes().forEach(
+        ({ node }) => {
           if (node) node.style.transform = '';
         },
       );
       engine.dispose();
       engineRef.current = null;
     };
-  }, [asset, driveSound, impactSound]);
+  }, [asset, resetVersion, driveSound, impactSound]);
 
   useEffect(() => {
     if (!menu) return;
@@ -298,11 +318,11 @@ export default function App() {
     next.pageCount = pendingPoster.asset.pageCount;
     panelPlaced.current = false;
     setTelemetry(empty);
-    setRecentBreak(false);
     setName(pendingPoster.name);
     setAsset(next);
     setPendingPoster(null);
-    setSettings((s) => ({ ...s, paused: false }));
+    setShowReadings(false);
+    setSettings({ ...DEFAULT_SETTINGS });
   }
   useEffect(() => {
     if (!asset) return;
@@ -311,21 +331,22 @@ export default function App() {
     if (mobile) setChooseInput(true);
     else input.startInput('body');
   }, [asset, input.startInput]);
-  async function download(format: 'jpg' | 'pdf') {
+  async function download(format: 'jpg' | 'pdf' | 'pieces') {
     const engine = engineRef.current;
     if (!engine) return;
     setMenu(null);
     setSaving(true);
     setNotice('');
     try {
-      await exportPoster(engine, format, name, settings.showPaths, 2);
+      if (format === 'pieces') await exportPieces(engine, name);
+      else await exportPoster(engine, format, name, settings.showPaths, 2);
     } catch {
       setNotice('Unable to export this poster. Please try again.');
     } finally {
       setSaving(false);
     }
   }
-  function toggleMenu(next: 'motion' | 'download', button: HTMLButtonElement) {
+  function toggleMenu(next: 'setting' | 'motion' | 'download', button: HTMLButtonElement) {
     const box = button.getBoundingClientRect();
     menuTrigger.current = button;
     setMenuPosition({
@@ -368,37 +389,12 @@ export default function App() {
   function endDrag(event: ReactPointerEvent<HTMLDivElement>) {
     if (drag.current?.id !== event.pointerId) return;
     drag.current = null;
+    panelPlaced.current = true;
     setIsDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId);
     holdPanel();
   }
-  const connected = input.status.state === 'connected',
-    strength = input.sample?.strength ?? 0,
-    percent = Math.round(strength * 100);
-  const effect =
-    input.source === 'body'
-      ? (input.sample?.body?.effect ?? 'REST')
-      : strength < 0.08
-        ? 'REST'
-        : strength < 0.35
-          ? 'MOVE'
-          : strength <= FRACTURE_SPEED_THRESHOLD
-            ? 'BEND'
-            : 'BREAK';
-  const isSettling =
-    telemetry.energy > 0.02 ||
-    telemetry.impact > 0.02 ||
-    telemetry.elements.some((element) => element.speed > 0.08);
-  const result = settings.paused
-    ? 'PAUSED'
-    : recentBreak
-      ? 'FRACTURED'
-      : effect === 'REST'
-        ? isSettling
-          ? 'FLOATING'
-          : 'STILL'
-        : effect;
   const body = input.sample?.body,
     nodes = new Map(body?.nodes.map((node) => [node.id, node]) ?? []);
   return (
@@ -458,8 +454,7 @@ export default function App() {
           }}
           aria-busy={loading}
         >
-          <button
-            ref={uploadRef}
+          {!asset && <button
             className={`upload-button ${asset ? 'replace-upload' : ''}`}
             aria-label="Upload poster"
             title="Upload PDF, JPG or PNG"
@@ -467,15 +462,16 @@ export default function App() {
             onClick={() => fileRef.current?.click()}
           >
             <img src="/design/upload.svg" alt="" />
-          </button>
+          </button>}
           {loading && (
             <span className="loading-indicator" role="status">
               Opening poster…
             </span>
           )}
-          {['coral', 'blue', 'pink', 'green'].map((color) => (
+          {['coral', 'blue', 'pink', 'green'].map((color, i) => (
             <img
               key={color}
+              ref={(node) => { tapeRefs.current[i] = node; }}
               className={`tape tape-${color}`}
               src={`/design/tape-${color}.svg`}
               alt=""
@@ -517,7 +513,7 @@ export default function App() {
                 }
                 aria-label="Camera preview"
               />
-              {showNodes && input.source === 'body' && body && (
+              {showReadings && input.source === 'body' && body && (
                 <svg
                   className="node-overlay"
                   viewBox={`0 0 ${videoRatio} 1`}
@@ -546,68 +542,10 @@ export default function App() {
                       cy={node.y}
                       r={node.strength > 0.35 ? 0.007 : 0.0045}
                       fill={PART_COLORS[node.part]}
-                    >
-                      <title>
-                        {node.label}: {Math.round(node.strength * 100)}%
-                      </title>
-                    </circle>
+                    />
                   ))}
                 </svg>
               )}
-              {!connected && (
-                <span className="preview-idle">
-                  {input.status.state === 'requesting'
-                    ? 'CONNECTING…'
-                    : input.status.state === 'idle'
-                      ? 'TRACKING OFF'
-                      : 'CHECK CONNECTION'}
-                </span>
-              )}
-            </div>
-            <div className="input-feedback" data-effect={result}>
-              {showReadings && <div className="causal-readout">
-                <span>
-                  {body?.dominant ?? (connected ? 'Motion' : 'Input')}{' '}
-                  <strong>{percent}%</strong>
-                </span>
-                <span aria-hidden="true">→</span>
-                <output aria-label="Poster response">{result}</output>
-              </div>}
-              {showReadings && input.source === 'body' && (
-                <div className="part-presence" aria-label="Detected body parts">
-                  {Object.keys(PART_COLORS).map((part) => {
-                    const reading = body?.parts.find(
-                      (value) => value.part === part,
-                    );
-                    return (
-                      <span
-                        key={part}
-                        data-detected={!!reading?.detected}
-                        data-part={part}
-                        style={
-                          {
-                            '--part-color':
-                              PART_COLORS[part as keyof typeof PART_COLORS],
-                          } as CSSProperties
-                        }
-                        title={
-                          reading?.detected
-                            ? `${part}: ${Math.round(reading.strength * 100)}%`
-                            : `${part}: not detected`
-                        }
-                      >
-                        {part}{' '}
-                        {reading?.detected
-                          ? `${Math.round(reading.strength * 100)}%`
-                          : '--'}
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-              <p className="input-message" role="status">
-                {input.status.message}
-              </p>
             </div>
           </aside>
           <div
@@ -616,6 +554,18 @@ export default function App() {
             role="region"
             aria-label="Poster panel"
             data-dragging={isDragging}
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              const offset = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+              if (!offset) return;
+              event.preventDefault();
+              panelPlaced.current = true;
+              const engine = engineRef.current, position = engine?.beginFixtureDrag('adjust-box');
+              if (engine && position) { held.current = true; const step = (event.shiftKey ? 40 : 10) / projection.current.scale;
+                engine.moveFixture('adjust-box', { x: position.x + offset[0] * step, y: position.y + offset[1] * step }); }
+            }}
+            onLostPointerCapture={(event) => { if (drag.current?.id === event.pointerId) endDrag(event); }}
             onPointerDown={startDrag}
             onPointerMove={moveDrag}
             onPointerUp={endDrag}
@@ -629,114 +579,33 @@ export default function App() {
               holdPanel();
             }}
           >
-            <div className="panel-heading">
-              <button
-                className="panel-grip"
-                data-drag-handle
-                aria-label="Move panel"
-                title="Drag the panel. Arrow keys move it; Shift moves faster."
-                onKeyDown={(event) => {
-                  const offset = {
-                    ArrowLeft: [-1, 0],
-                    ArrowRight: [1, 0],
-                    ArrowUp: [0, -1],
-                    ArrowDown: [0, 1],
-                  }[event.key];
-                  if (!offset) return;
-                  event.preventDefault();
-                  panelPlaced.current = true;
-                  const engine = engineRef.current,
-                    position = engine?.beginFixtureDrag('adjust-box');
-                  if (position && engine) {
-                    held.current = true;
-                    const step =
-                      (event.shiftKey ? 40 : 10) / projection.current.scale;
-                    engine.moveFixture('adjust-box', {
-                      x: position.x + offset[0] * step,
-                      y: position.y + offset[1] * step,
-                    });
-                    if (!panelPlaced.current && !hovered.current && !menu) {
-                      engine.endFixtureDrag('adjust-box');
-                      held.current = false;
-                    }
-                  }
-                }}
-              >
-                <Grip size={16} aria-hidden="true" />
-                Poster map
+            <span className="panel-grip" data-drag-handle aria-hidden="true"><Grip size={16} /></span>
+            {showReadings && (
+              <div className="panel-data" aria-label="Motion data">
+                <div className="part-presence" aria-label="Detected body parts">
+                  {input.source === 'body' ? Object.keys(PART_COLORS).map((part) => {
+                    const reading = body?.parts.find((value) => value.part === part);
+                    return <span key={part} data-detected={!!reading?.detected} data-part={part}
+                      style={{ '--part-color': PART_COLORS[part as keyof typeof PART_COLORS] } as CSSProperties}>
+                      {part} {reading?.detected ? `${Math.round(reading.strength * 100)}%` : '—'}
+                    </span>;
+                  }) : input.source === 'sensor' && input.sample?.confidence
+                    ? <span data-detected="true">Motion {Math.round(input.sample.strength * 100)}%</span> : null}
+                </div>
+              </div>
+            )}
+            <div className="panel-controls">
+              <button className="download-button" aria-label="Path" aria-pressed={settings.showPaths && settings.blackPaths} onClick={togglePath}>Path</button>
+              <button className="download-button" aria-label="Data" aria-pressed={showReadings} onClick={toggleData}>Data</button>
+              <button className="download-button" aria-label="Download" aria-expanded={menu === 'download'} aria-haspopup="menu" disabled={saving}
+                onClick={(event) => toggleMenu('download', event.currentTarget)}>{saving ? 'Saving…' : 'Download'}</button>
+              <button className="icon-button" aria-label={settings.paused ? 'Resume motion' : 'Pause motion'}
+                aria-pressed={settings.paused} onClick={() => setSettings((state) => ({ ...state, paused: !state.paused }))}>
+                {settings.paused ? <Play size={23} strokeWidth={1.5} /> : <Pause size={23} strokeWidth={1.5} />}
               </button>
-              <button
-                className="mapping-toggle"
-                aria-label="Show paths and numbers"
-                aria-pressed={settings.showPaths}
-                title="Trails follow poster pieces. Toggle their paths and numeric labels."
-                onClick={() =>
-                  setSettings((s) => ({
-                    ...s,
-                    showPaths: !s.showPaths,
-                    showLabels: !s.showPaths,
-                  }))
-                }
-              >
-                {settings.showPaths ? 'ON' : 'OFF'}
-              </button>
-            </div>
-            <div className="panel-toggles">
-              <button className="round-toggle" aria-label="Show body nodes" aria-pressed={showNodes} onClick={() => setShowNodes(!showNodes)}>node</button>
-              <button className="round-toggle" aria-label="Show motion readings" aria-pressed={showReadings} onClick={() => setShowReadings(!showReadings)}>data</button>
-              <button className="round-toggle" aria-label="Black paths" aria-pressed={settings.blackPaths} onClick={() => setSettings((s) => ({ ...s, blackPaths: !s.blackPaths }))}>black</button>
-            </div>
-            <div className="control-row">
-              <button
-                className="download-button"
-                aria-label="Download"
-                aria-expanded={menu === 'download'}
-                aria-haspopup="menu"
-                disabled={saving}
-                onClick={(event) => toggleMenu('download', event.currentTarget)}
-              >
-                {saving ? 'Saving…' : 'Download'}
-              </button>
-              <button
-                className="icon-button"
-                aria-label={settings.paused ? 'Resume motion' : 'Pause motion'}
-                title={settings.paused ? 'Resume motion' : 'Pause motion'}
-                aria-pressed={settings.paused}
-                onClick={() =>
-                  setSettings((s) => ({ ...s, paused: !s.paused }))
-                }
-              >
-                {settings.paused ? (
-                  <Play size={23} strokeWidth={1.5} />
-                ) : (
-                  <Pause size={23} strokeWidth={1.5} />
-                )}
-              </button>
-              <button
-                className={`icon-button ${connected ? 'is-active' : ''}`}
-                aria-label="Motion input"
-                title="Choose motion input"
-                aria-expanded={menu === 'motion'}
-                aria-haspopup="menu"
-                onClick={(event) => toggleMenu('motion', event.currentTarget)}
-              >
-                <Camera size={26} strokeWidth={1.4} />
-              </button>
-              <button
-                className="icon-button"
-                aria-label="Sound"
-                title={
-                  input.sound === 'running' ? 'Mute sound' : 'Enable sound'
-                }
-                aria-pressed={input.sound === 'running'}
-                onClick={input.toggleSound}
-              >
-                {input.sound === 'running' ? (
-                  <Volume2 size={25} strokeWidth={1.4} />
-                ) : (
-                  <VolumeX size={25} strokeWidth={1.4} />
-                )}
-              </button>
+              <button className="icon-button" aria-label="Setting" title="Movement and sound settings" aria-expanded={menu === 'setting' || menu === 'motion'} aria-haspopup="menu"
+                onClick={(event) => toggleMenu('setting', event.currentTarget)}><Activity size={26} strokeWidth={1.4} /></button>
+              <button className="restart-button" aria-label="Restart" title="Start again with this poster" onClick={restart}><img src="/design/upload.svg" alt="" /></button>
             </div>
           </div>
         </>
@@ -750,46 +619,28 @@ export default function App() {
           >
             {menu === 'download' ? (
               <div className="popover" role="menu" aria-label="Download format">
-                {(['jpg', 'pdf'] as const).map((format) => (
+                {(['jpg', 'pdf', 'pieces'] as const).map((format) => (
                   <button
                     role="menuitem"
                     key={format}
                     onClick={() => void download(format)}
                   >
-                    {format.toUpperCase()}
+                    {format === 'pieces' ? 'Separate PNGs · ZIP' : format.toUpperCase()}
                   </button>
                 ))}
               </div>
+            ) : menu === 'setting' ? (
+              <div className="popover" role="menu" aria-label="Settings">
+                <button role="menuitem" onClick={input.toggleSound}>
+                  {input.sound === 'running' ? <Volume2 size={18} /> : <VolumeX size={18} />} Sound {input.sound === 'running' ? 'ON' : 'OFF'}
+                </button>
+                <button role="menuitem" aria-haspopup="menu" onClick={() => setMenu('motion')}>Motion detection</button>
+                <button role="menuitem" onClick={() => { setMenu(null); fileRef.current?.click(); }}>Change poster</button>
+              </div>
             ) : (
-              <div
-                className="popover"
-                role="menu"
-                aria-label="Motion input options"
-              >
-                <button
-                  role="menuitem"
-                  onClick={() => input.startInput('body')}
-                >
-                  Body nodes · fixed camera
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={() => input.startInput('sensor')}
-                >
-                  Device motion sensor
-                </button>
-                {input.source && (
-                  <button role="menuitem" onClick={input.stopInput}>
-                    Stop tracking
-                  </button>
-                )}
-                <p className="connection-detail" aria-live="polite">
-                  {input.status.message}
-                </p>
-                <p>
-                  Body nodes: keep the camera fixed and your face, hands and
-                  body visible. Processing stays on this device. No microphone.
-                </p>
+              <div className="popover" role="menu" aria-label="Motion input options">
+                <button role="menuitem" onClick={() => { input.startInput('body'); setMenu(null); }}>Body Nodes</button>
+                <button role="menuitem" onClick={() => { input.startInput('sensor'); setMenu(null); }}>Device Motion Sensor</button>
               </div>
             )}
           </div>,
@@ -800,8 +651,8 @@ export default function App() {
         <section className="about-dialog input-choice" role="dialog" aria-modal="true" aria-label="Choose motion input">
           <h1>How will you move?</h1>
           <p>Use your body in front of the camera, or move your device.</p>
-          <button autoFocus className="download-button" onClick={() => { setChooseInput(false); input.startInput('body'); }}>Body nodes · camera</button>
-          <button className="download-button" onClick={() => { setChooseInput(false); input.startInput('sensor'); }}>Device motion sensor</button>
+          <button autoFocus className="download-button" onClick={() => { setChooseInput(false); input.startInput('body'); }}>Body Nodes</button>
+          <button className="download-button" onClick={() => { setChooseInput(false); input.startInput('sensor'); }}>Device Motion Sensor</button>
         </section>
       </div>}
       {about && (
