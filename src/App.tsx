@@ -39,8 +39,7 @@ export default function App() {
     [isDragging, setIsDragging] = useState(false);
   const [settings, setSettings] = useState<Settings>({ ...DEFAULT_SETTINGS }),
     [telemetry, setTelemetry] = useState(empty);
-  const [resetVersion, setResetVersion] = useState(0),
-    [menu, setMenu] = useState<'setting' | 'motion' | 'download' | null>(null);
+  const [menu, setMenu] = useState<'setting' | 'motion' | 'download' | null>(null);
   const [menuPosition, setMenuPosition] = useState({ left: 12, top: 12 }),
     [dropActive, setDropActive] = useState(false),
     [videoRatio, setVideoRatio] = useState(16 / 9);
@@ -81,17 +80,6 @@ export default function App() {
     { id: 'camera-preview', node: previewRef.current },
     ...tapeRefs.current.map((node, i) => ({ id: `tape-${i}`, node })),
   ];
-  function restart() {
-    setMenu(null);
-    panelPlaced.current = false;
-    hovered.current = false;
-    drag.current = null;
-    setIsDragging(false);
-    setTelemetry(empty);
-    setShowReadings(false);
-    setSettings({ ...DEFAULT_SETTINGS });
-    setResetVersion((version) => version + 1);
-  }
   function togglePath() {
     const active = settings.showPaths && settings.blackPaths;
     setShowReadings(false);
@@ -233,7 +221,7 @@ export default function App() {
       engine.dispose();
       engineRef.current = null;
     };
-  }, [asset, resetVersion, driveSound, impactSound]);
+  }, [asset, driveSound, impactSound]);
 
   useEffect(() => {
     if (!menu) return;
@@ -605,7 +593,7 @@ export default function App() {
               </button>
               <button className="icon-button" aria-label="Setting" title="Movement and sound settings" aria-expanded={menu === 'setting' || menu === 'motion'} aria-haspopup="menu"
                 onClick={(event) => toggleMenu('setting', event.currentTarget)}><Activity size={26} strokeWidth={1.4} /></button>
-              <button className="restart-button" aria-label="Restart" title="Start again with this poster" onClick={restart}><img src="/design/upload.svg" alt="" /></button>
+              <button className="restart-button" aria-label="Change poster" title="Choose a new poster" onClick={() => { setMenu(null); fileRef.current?.click(); }}><img src="/design/upload.svg" alt="" /></button>
             </div>
           </div>
         </>
@@ -635,7 +623,6 @@ export default function App() {
                   {input.sound === 'running' ? <Volume2 size={18} /> : <VolumeX size={18} />} Sound {input.sound === 'running' ? 'ON' : 'OFF'}
                 </button>
                 <button role="menuitem" aria-haspopup="menu" onClick={() => setMenu('motion')}>Motion detection</button>
-                <button role="menuitem" onClick={() => { setMenu(null); fileRef.current?.click(); }}>Change poster</button>
               </div>
             ) : (
               <div className="popover" role="menu" aria-label="Motion input options">

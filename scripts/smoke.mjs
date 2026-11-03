@@ -120,6 +120,8 @@ try {
   if (!production) { await page.waitForTimeout(40); const m = await map(page); assert(m.settings.showPaths && !m.settings.blackPaths); }
   await click(page, 'Setting');
   assert.equal(await page.getByRole('menuitem', { name: /^Sound/ }).count(), 1);
+  assert.equal(await page.getByRole('menuitem').count(), 2);
+  assert.equal(await page.getByRole('menuitem', { name: 'Change poster', exact: true }).count(), 0);
   await page.getByRole('menuitem', { name: 'Motion detection', exact: true }).click();
   assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['Body Nodes', 'Device Motion Sensor']);
   await page.keyboard.press('Escape'); await page.mouse.move(5, 5);
@@ -157,12 +159,18 @@ try {
     }
     if (format !== 'Separate PNGs · ZIP') await click(page, 'Download');
   }
-  await click(page, 'Restart'); await page.waitForTimeout(300);
+  const picker = page.waitForEvent('filechooser');
+  await click(page, 'Change poster');
+  await (await picker).setFiles({ name: 'replacement.png', mimeType: 'image/png', buffer: png });
+  await page.getByRole('dialog', { name: 'Crop poster', exact: true }).waitFor();
+  await click(page, 'Use crop');
+  await page.waitForFunction(() => document.querySelector('[data-testid="motion-status"]').dataset.state === 'connected');
+  await page.waitForTimeout(300);
   assert.equal(await page.getByRole('dialog').count(), 0);
   assert.equal(await page.locator('.studio.is-distorting').count(), 0);
   assert.equal(await panel.getByRole('button', { name: 'Path', exact: true }).getAttribute('aria-pressed'), 'false');
   if (!production) assert((await map(page)).elements.every((e) => e.dx === 0 && e.dy === 0));
-  record('JPG/PDF and compatible ZIP of individual PNGs export; + restarts same poster without reopening camera or upload');
+  record('JPG/PDF and compatible ZIP of individual PNGs export; + opens file picker and crop to replace the poster; Setting has no Change poster item');
   if (!production) {
     const result = await page.evaluate(async () => {
       const { extractElements } = await import('/src/lib/extract.ts');
